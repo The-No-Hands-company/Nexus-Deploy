@@ -1,0 +1,19 @@
+services:
+  nexus-deploy:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATA_DIR=/workspace
+      - BASE_URL=http://localhost:3000
+      - APP_SECRET=${APP_SECRET:-change-me}
+      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-owner@the-no-hands.company}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me}
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-false}
+    volumes:
+      - nexus_workspace:/workspace
+
+volumes:
+  nexus_workspace:
