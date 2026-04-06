@@ -724,6 +724,34 @@ function ProjectsList() {
   );
 }
 
+// ── Network Health ─────────────────────────────────────────────────────────
+const NETWORK_API = (import.meta as any).env?.VITE_NEXUS_NETWORK_API
+  ?? "https://network.nexus.computer/api/stats";
+
+function NetworkHealth() {
+  const [stats, setStats] = React.useState<{ nodes_online: number; total_ram_gb: number; countries: number; compute_jobs_hour: number } | null>(null);
+  useEffect(() => {
+    const load = () => fetch(NETWORK_API).then(r => r.json()).then(setStats).catch(() => {});
+    load(); const t = setInterval(load, 30_000); return () => clearInterval(t);
+  }, []);
+  if (!stats) return null;
+  const ramTb = stats.total_ram_gb >= 1024 ? (stats.total_ram_gb / 1024).toFixed(1) + " TB" : Math.round(stats.total_ram_gb) + " GB";
+  return (
+    <div style={{ margin: "0.75rem 0", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border2)", background: "rgba(255,255,255,0.02)", fontSize: "0.75rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 7 }}>
+        <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--live)", display: "inline-block" }} />
+        <span style={{ color: "var(--live)", fontWeight: 600, letterSpacing: "0.02em" }}>Nexus Network</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 8px", color: "var(--muted)" }}>
+        <span>Nodes <span style={{ color: "var(--text)" }}>{stats.nodes_online.toLocaleString()}</span></span>
+        <span>RAM <span style={{ color: "var(--text)" }}>{ramTb}</span></span>
+        <span>Compute <span style={{ color: "var(--warn)" }}>{stats.compute_jobs_hour.toLocaleString()}</span></span>
+        <span>Countries <span style={{ color: "var(--text)" }}>{stats.countries}</span></span>
+      </div>
+    </div>
+  );
+}
+
 // ── Sidebar ────────────────────────────────────────────────────────────────
 function Sidebar({ user, onLogout }: { user: User; onLogout: () => void }) {
   const nav = useNavigate();
@@ -737,6 +765,7 @@ function Sidebar({ user, onLogout }: { user: User; onLogout: () => void }) {
         <button className="nav-link active" onClick={() => nav("/")}><span className="icon">⬡</span> Projects</button>
         <button className="nav-link" onClick={() => window.open("https://github.com/The-No-Hands-company/Nexus-Deploy", "_blank")}><span className="icon">↗</span> GitHub</button>
       </nav>
+      <NetworkHealth />
       <div className="sidebar-user">
         <div className="role-badge">{user.role}</div>
         <div className="email">{user.email}</div>
