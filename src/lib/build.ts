@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnStream, dockerRun } from "./docker.js";
-import { loadDb, saveDb } from "./store.js";
+import { loadDb, writeDb, trimDeployments, capLogs } from "./store.js";
 import { newId } from "./auth.js";
 import { config } from "./config.js";
 import type { Project, Deployment } from "../types.js";
@@ -24,37 +24,47 @@ function broadcast(deploymentId: string, line: string) {
   subscribers.get(deploymentId)?.forEach(fn => fn(line));
 }
 
-// ── DB helpers ─────────────────────────────────────────────────────────────
-function pushLog(deploymentId: string, line: string) {
-  broadcast(deploymentId, line);
-  const db = loadDb();
-  const dep = db.deployments.find(d => d.id === deploymentId);
-  if (dep) { dep.logs.push(line); saveDb(db); }
+// ── Per-project build lock ─────────────────────────────────────────────────
+const buildingProjects = new Set<string>();
+
+export function isBuilding(projectId: string): boolean {
+  return buildingProjects.has(projectId);
 }
 
-function setDepStatus(deploymentId: string, status: Deployment["status"]) {
-  const db = loadDb();
-  const dep = db.deployments.find(d => d.id === deploymentId);
-  if (dep) {
+// ── DB helpers (all through write queue) ──────────────────────────────────
+async function pushLog(deploymentId: string, line: string): Promise<void> {
+  broadcast(deploymentId, line);
+  await writeDb(db => {
+    const dep = db.deployments.find(d => d.id === deploymentId);
+    if (!dep) return;
+    dep.logs.push(line);
+    dep.logs = capLogs(dep.logs);
+  });
+}
+
+async function setDepStatus(deploymentId: string, status: Deployment["status"]): Promise<void> {
+  await writeDb(db => {
+    const dep = db.deployments.find(d => d.id === deploymentId);
+    if (!dep) return;
     dep.status = status;
     if (status === "live" || status === "failed") dep.finishedAt = Date.now();
-    saveDb(db);
-  }
+  });
 }
 
-function setProjStatus(projectId: string, status: Project["status"], extra: Partial<Project> = {}) {
-  const db = loadDb();
-  const proj = db.projects.find(p => p.id === projectId);
-  if (proj) { Object.assign(proj, { status, updatedAt: Date.now(), ...extra }); saveDb(db); }
+async function setProjStatus(projectId: string, status: Project["status"], extra: Partial<Project> = {}): Promise<void> {
+  await writeDb(db => {
+    const proj = db.projects.find(p => p.id === projectId);
+    if (!proj) return;
+    Object.assign(proj, { status, updatedAt: Date.now(), ...extra });
+  });
 }
 
 // ── Create deployment record ───────────────────────────────────────────────
 export function createDeployment(
   project: Project,
   commitSha: string,
-  triggeredBy: "manual" | "webhook" | "rollback" = "manual"
+  triggeredBy: DeployTrigger = "manual"
 ): Deployment {
-  const db = loadDb();
   const deployment: Deployment = {
     id: newId("dep"),
     projectId: project.id,
@@ -64,25 +74,39 @@ export function createDeployment(
     imageTag: "",
     logs: [
       `[nexus] Deploy queued for ${project.name}`,
-      `[nexus] repo=${project.repo} branch=${project.branch}`,
+      `[nexus] repo=${project.repo}  branch=${project.branch}`,
     ],
     createdAt: Date.now(),
   };
+  // Synchronous first write — only call from non-concurrent context (route handler)
+  const db = loadDb();
   db.deployments.unshift(deployment);
-  saveDb(db);
+  // Flush synchronously so the route handler can return the ID immediately
+  import("./store.js").then(({ saveDb }) => saveDb(db));
   return deployment;
 }
 
+// Re-export trigger type so importers don't need types.ts
+import type { DeployTrigger } from "../types.js";
+
 // ── Full build + deploy ────────────────────────────────────────────────────
 export async function runDeploy(project: Project, deploymentId: string): Promise<void> {
-  const log = (line: string) => pushLog(deploymentId, line);
+  if (buildingProjects.has(project.id)) {
+    await pushLog(deploymentId, "[nexus] ✗ Another build is already running for this project");
+    await setDepStatus(deploymentId, "failed");
+    return;
+  }
+
+  buildingProjects.add(project.id);
   const buildDir = path.join(os.tmpdir(), `nexus-build-${deploymentId}`);
 
   try {
-    setDepStatus(deploymentId, "building");
-    setProjStatus(project.id, "building");
+    const log = (line: string) => pushLog(deploymentId, line);
 
-    // 1. Clone
+    await setDepStatus(deploymentId, "building");
+    await setProjStatus(project.id, "building");
+
+    // 1. Clone ──────────────────────────────────────────────────────────────
     log(`[nexus] Cloning ${project.repo} @ ${project.branch}…`);
     fs.mkdirSync(buildDir, { recursive: true });
 
@@ -93,47 +117,56 @@ export async function runDeploy(project: Project, deploymentId: string): Promise
     await spawnStream("git", ["clone", "--depth", "1", "--branch", project.branch, repoUrl, buildDir], log);
     log(`[nexus] ✓ Clone complete`);
 
-    // 2. Build
+    // 2. Build ──────────────────────────────────────────────────────────────
     const imageTag = `nexus/${project.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}:${deploymentId.slice(-8)}`;
-    log(`[nexus] Building image ${imageTag}…`);
-
     const hasDockerfile = fs.existsSync(path.join(buildDir, "Dockerfile"));
+    log(`[nexus] Building with ${hasDockerfile ? "Docker" : "Nixpacks"} → ${imageTag}`);
+
     if (hasDockerfile) {
       await spawnStream("docker", ["build", "-t", imageTag, buildDir], log);
     } else {
       await spawnStream("nixpacks", ["build", buildDir, "--name", imageTag], log);
     }
-
-    log(`[nexus] ✓ Image built: ${imageTag}`);
+    log(`[nexus] ✓ Image built`);
 
     // Persist imageTag
-    const db1 = loadDb();
-    const dep1 = db1.deployments.find(d => d.id === deploymentId);
-    if (dep1) { dep1.imageTag = imageTag; saveDb(db1); }
+    await writeDb(db => {
+      const dep = db.deployments.find(d => d.id === deploymentId);
+      if (dep) dep.imageTag = imageTag;
+    });
 
     await runContainer(project, deploymentId, imageTag, log);
 
   } catch (err: any) {
-    log(`[nexus] ✗ Deploy failed: ${err?.message ?? String(err)}`);
-    setDepStatus(deploymentId, "failed");
-    setProjStatus(project.id, "failed");
+    const msg = err?.message ?? String(err);
+    await pushLog(deploymentId, `[nexus] ✗ Build failed: ${msg}`);
+    await setDepStatus(deploymentId, "failed");
+    await setProjStatus(project.id, "failed");
   } finally {
+    buildingProjects.delete(project.id);
     fs.rmSync(buildDir, { recursive: true, force: true });
+    // Trim old deployments in the background
+    trimDeployments(project.id).catch(() => {});
   }
 }
 
-// ── Rollback — re-run an existing image ───────────────────────────────────
+// ── Rollback ───────────────────────────────────────────────────────────────
 export async function runRollback(project: Project, deploymentId: string, imageTag: string): Promise<void> {
-  const log = (line: string) => pushLog(deploymentId, line);
+  if (buildingProjects.has(project.id)) return;
+  buildingProjects.add(project.id);
+
   try {
-    setDepStatus(deploymentId, "building");
-    setProjStatus(project.id, "building");
+    const log = (line: string) => pushLog(deploymentId, line);
+    await setDepStatus(deploymentId, "building");
+    await setProjStatus(project.id, "building");
     log(`[nexus] Rolling back to image ${imageTag}…`);
     await runContainer(project, deploymentId, imageTag, log);
   } catch (err: any) {
-    log(`[nexus] ✗ Rollback failed: ${err?.message ?? String(err)}`);
-    setDepStatus(deploymentId, "failed");
-    setProjStatus(project.id, "failed");
+    await pushLog(deploymentId, `[nexus] ✗ Rollback failed: ${err?.message}`);
+    await setDepStatus(deploymentId, "failed");
+    await setProjStatus(project.id, "failed");
+  } finally {
+    buildingProjects.delete(project.id);
   }
 }
 
@@ -142,26 +175,30 @@ async function runContainer(
   project: Project,
   deploymentId: string,
   imageTag: string,
-  log: (l: string) => void
+  log: (l: string) => Promise<void>
 ) {
-  const env: Record<string, string> = { PORT: "3000", NODE_ENV: "production", ...project.env };
+  const env: Record<string, string> = {
+    PORT: String(project.port ?? 3000),
+    NODE_ENV: "production",
+    ...project.env,
+  };
   const domain = `${project.name}.${config.baseDomain}`;
   const containerName = `nexus-app-${project.name}`;
 
-  log(`[nexus] Starting container at ${domain}…`);
+  log(`[nexus] Starting container → https://${domain}`);
 
   const containerId = await dockerRun({
     image: imageTag,
     name: containerName,
     env,
     domain,
-    port: 3000,
+    port: project.port ?? 3000,
     network: config.dockerNetwork,
     onLine: log,
   });
 
   log(`[nexus] ✅ Live at https://${domain}`);
 
-  setDepStatus(deploymentId, "live");
-  setProjStatus(project.id, "live", { containerId, domain, imageTag });
+  await setDepStatus(deploymentId, "live");
+  await setProjStatus(project.id, "live", { containerId, domain, imageTag });
 }

@@ -1,19 +1,74 @@
+# Nexus Deploy — full production stack
+# Traefik handles HTTPS + routing. nexus-deploy handles builds + dashboard.
+#
+# Quick start:
+#   cp .env.example .env   # fill in your values
+#   docker compose up -d
+
 services:
+
+  # ── Traefik reverse proxy ─────────────────────────────────────────────────
+  traefik:
+    image: traefik:v3.1
+    container_name: nexus-traefik
+    restart: unless-stopped
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=nexus-net
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/acme/acme.json
+      - --log.level=INFO
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - acme_data:/acme
+    networks:
+      - nexus-net
+
+  # ── Nexus Deploy ──────────────────────────────────────────────────────────
   nexus-deploy:
     build: .
-    ports:
-      - "3000:3000"
+    container_name: nexus-deploy
+    restart: unless-stopped
+    env_file: .env
     environment:
-      - PORT=3000
-      - DATA_DIR=/workspace
-      - BASE_URL=http://localhost:3000
-      - APP_SECRET=${APP_SECRET:-change-me}
-      - JWT_SECRET=${JWT_SECRET:-change-me}
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-owner@the-no-hands.company}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me}
-      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-false}
+      PORT: "3000"
+      DOCKER_NETWORK: nexus-net
     volumes:
+      # Persistent data (DB, uploads)
       - nexus_workspace:/workspace
+      # Docker socket — needed so nexus can build and run containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared build temp dir
+      - /tmp/nexus-builds:/tmp/nexus-builds
+    networks:
+      - nexus-net
+    depends_on:
+      - traefik
+    labels:
+      - traefik.enable=true
+      # Dashboard + API
+      - traefik.http.routers.nexus.rule=Host(`${BASE_DOMAIN}`)
+      - traefik.http.routers.nexus.entrypoints=websecure
+      - traefik.http.routers.nexus.tls=true
+      - traefik.http.routers.nexus.tls.certresolver=letsencrypt
+      - traefik.http.services.nexus.loadbalancer.server.port=3000
+
+networks:
+  nexus-net:
+    name: nexus-net
+    driver: bridge
 
 volumes:
   nexus_workspace:
+  acme_data:

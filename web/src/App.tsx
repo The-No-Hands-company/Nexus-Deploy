@@ -10,6 +10,7 @@ type Project = {
   env: Record<string, string>; status: ProjectStatus;
   domain?: string; containerId?: string; imageTag?: string;
   webhookSecret?: string;
+  port: number;
   createdAt: number; updatedAt: number;
   latestDeployment?: Deployment | null;
 };
@@ -113,7 +114,7 @@ function Login({ onAuthed }: { onAuthed: (token: string, user: User) => void }) 
 
 // ── New project modal ──────────────────────────────────────────────────────
 function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
-  const [form, setForm] = useState({ name: "", repo: "", branch: "main", buildCommand: "npm run build", startCommand: "npm start", volumePath: "/workspace" });
+  const [form, setForm] = useState({ name: "", repo: "", branch: "main", buildCommand: "npm run build", startCommand: "npm start", volumePath: "/workspace", port: "3000" });
   const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -139,6 +140,7 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
           <div className="form-group"><label>Start command</label><input value={form.startCommand} onChange={set("startCommand")} /></div>
         </div>
         <div className="form-group"><label>Volume path</label><input value={form.volumePath} onChange={set("volumePath")} /></div>
+        <div className="form-group"><label>Port</label><input value={form.port} onChange={set("port")} placeholder="3000" type="number" style={{width:"120px"}} /></div>
         {error && <p className="form-error">{error}</p>}
         <div className="form-actions">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -286,7 +288,7 @@ function ProjectDetail({ token }: { token: string }) {
   const [activeDepId, setActiveDepId] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
   const [error, setError] = useState("");
-  const [settingsForm, setSettingsForm] = useState({ repo: "", branch: "", buildCommand: "", startCommand: "" });
+  const [settingsForm, setSettingsForm] = useState({ repo: "", branch: "", buildCommand: "", startCommand: "", port: "3000" });
   const [settingsSaved, setSettingsSaved] = useState(false);
 
   const load = useCallback(async () => {
@@ -294,7 +296,7 @@ function ProjectDetail({ token }: { token: string }) {
     const d = await api<{ project: Project; deployments: Deployment[] }>(`/api/projects/${id}`);
     setProject(d.project);
     setDeployments(d.deployments);
-    setSettingsForm({ repo: d.project.repo, branch: d.project.branch, buildCommand: d.project.buildCommand, startCommand: d.project.startCommand });
+    setSettingsForm({ repo: d.project.repo, branch: d.project.branch, buildCommand: d.project.buildCommand, startCommand: d.project.startCommand, port: String(d.project.port ?? 3000) });
     if (!activeDepId && d.deployments.length) setActiveDepId(d.deployments[0].id);
   }, [id]);
 
@@ -341,7 +343,7 @@ function ProjectDetail({ token }: { token: string }) {
 
   async function saveSettings() {
     if (!project) return;
-    await api(`/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(settingsForm) });
+    await api(`/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify({ ...settingsForm, port: Number(settingsForm.port) }) });
     setSettingsSaved(true); setTimeout(() => setSettingsSaved(false), 2500);
     await load();
   }
@@ -488,6 +490,8 @@ function ProjectDetail({ token }: { token: string }) {
                 <div className="form-group"><label>Start command</label>
                   <input value={settingsForm.startCommand} onChange={e => setSettingsForm(f => ({ ...f, startCommand: e.target.value }))} /></div>
               </div>
+              <div className="form-group" style={{maxWidth:"200px"}}><label>Port</label>
+                <input value={settingsForm.port} onChange={e => setSettingsForm(f => ({ ...f, port: e.target.value }))} type="number" /></div>
               <div className="form-actions">
                 <button className="btn btn-primary btn-sm" onClick={saveSettings}>{settingsSaved ? "✓ Saved" : "Save"}</button>
               </div>

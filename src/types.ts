@@ -18,6 +18,7 @@ export type Project = {
   buildCommand: string;
   startCommand: string;
   volumePath: string;
+  port: number;           // port the container listens on (default 3000)
   env: Record<string, string>;
   status: ProjectStatus;
   domain?: string;
@@ -29,7 +30,6 @@ export type Project = {
 };
 
 export type DeployTrigger = "manual" | "webhook" | "rollback";
-
 export type DeploymentStatus = "queued" | "building" | "live" | "failed";
 
 export type Deployment = {
