@@ -8,6 +8,8 @@ export type User = {
   createdAt: number;
 };
 
+export type ProjectStatus = "idle" | "building" | "live" | "failed" | "stopped";
+
 export type Project = {
   id: string;
   name: string;
@@ -17,6 +19,10 @@ export type Project = {
   startCommand: string;
   volumePath: string;
   env: Record<string, string>;
+  status: ProjectStatus;
+  domain?: string;
+  containerId?: string;
+  imageTag?: string;
   createdAt: number;
   updatedAt: number;
 };
@@ -27,6 +33,7 @@ export type Deployment = {
   id: string;
   projectId: string;
   commitSha: string;
+  triggeredBy: "manual" | "webhook";
   status: DeploymentStatus;
   imageTag: string;
   logs: string[];
