@@ -18,10 +18,11 @@ export type Project = {
   buildCommand: string;
   startCommand: string;
   volumePath: string;
-  port: number;           // port the container listens on (default 3000)
+  port: number;
   env: Record<string, string>;
   status: ProjectStatus;
-  domain?: string;
+  domain?: string;          // auto-assigned: name.baseDomain
+  customDomain?: string;    // user-supplied custom domain
   containerId?: string;
   imageTag?: string;
   webhookSecret?: string;
@@ -49,3 +50,8 @@ export type Session = {
   userId: string;
   createdAt: number;
 };
+
+// SSE event shape sent to dashboard
+export type SSEEvent =
+  | { type: "status"; projectId: string; status: ProjectStatus }
+  | { type: "ping" };
