@@ -10,11 +10,12 @@ type Project = {
   port: number; env: Record<string, string>; status: ProjectStatus;
   domain?: string; customDomain?: string;
   containerId?: string; imageTag?: string; webhookSecret?: string;
-  memoryLimit?: string; cpus?: string;
+  memoryLimit?: string; cpus?: string; notifyUrl?: string;
+  autoDeployEnabled: boolean;
   createdAt: number; updatedAt: number;
   latestDeployment?: Deployment | null;
 };
-type DeployStatus = "queued" | "building" | "live" | "failed";
+type DeployStatus = "queued" | "building" | "live" | "failed" | "cancelled";
 type Deployment = {
   id: string; projectId: string; commitSha: string;
   triggeredBy: "manual" | "webhook" | "rollback";
@@ -22,8 +23,6 @@ type Deployment = {
   logs: string[]; createdAt: number; finishedAt?: number;
   projectName?: string;
 };
-
-// ── Types (extra) ─────────────────────────────────────────────────────────
 type ContainerStats = {
   cpu: string; memUsage: string; memLimit: string;
   memPercent: string; netIn: string; netOut: string; pids: string;
@@ -59,33 +58,15 @@ function classifyLine(line: string) {
   if (/warn/i.test(line)) return "warn";
   return "";
 }
-const triggerIcon: Record<string, string> = { manual: "⬡", webhook: "⚡", rollback: "↩" };
+const triggerIcon: Record<string, string> = { manual: "⬡", webhook: "⚡", rollback: "↩", cancelled: "✕" };
 
 // ── Badge ──────────────────────────────────────────────────────────────────
 function Badge({ status }: { status: string }) {
-  return <span className={`badge badge-${status}`}>{status}</span>;
+  const s = status === "cancelled" ? "failed" : status;
+  return <span className={`badge badge-${s}`}>{status}</span>;
 }
 function TriggerPill({ by }: { by: string }) {
   return <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{triggerIcon[by] ?? "·"} {by}</span>;
-}
-
-// ── SSE hook — live project status updates ─────────────────────────────────
-function useSSE(onStatus: (projectId: string, status: ProjectStatus) => void) {
-  const cbRef = useRef(onStatus);
-  cbRef.current = onStatus;
-  useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-    const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
-    es.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "status") cbRef.current(msg.projectId, msg.status);
-      } catch {}
-    };
-    es.onerror = () => es.close();
-    return () => es.close();
-  }, []);
 }
 
 // ── Login ──────────────────────────────────────────────────────────────────
@@ -110,8 +91,8 @@ function Login({ onAuthed }: { onAuthed: (token: string, user: User) => void }) 
           <button className={`login-tab ${mode === "login" ? "active" : ""}`} onClick={() => setMode("login")}>Sign in</button>
           <button className={`login-tab ${mode === "register" ? "active" : ""}`} onClick={() => setMode("register")}>Create account</button>
         </div>
-        <div className="form-group"><label>Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" onKeyDown={e => e.key === "Enter" && submit()} /></div>
-        <div className="form-group"><label>Password</label><input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••" onKeyDown={e => e.key === "Enter" && submit()} /></div>
+        <div className="form-group"><label>Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} /></div>
+        <div className="form-group"><label>Password</label><input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} /></div>
         {error && <p className="form-error">{error}</p>}
         <button className="btn btn-primary" style={{ width: "100%", marginTop: "0.5rem" }} onClick={submit} disabled={loading}>
           {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
@@ -123,12 +104,12 @@ function Login({ onAuthed }: { onAuthed: (token: string, user: User) => void }) 
 
 // ── New project modal ──────────────────────────────────────────────────────
 function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
-  const [form, setForm] = useState({ name: "", repo: "", branch: "main", port: "3000", buildCommand: "npm run build", startCommand: "npm start", volumePath: "/workspace" });
+  const [f, setF] = useState({ name: "", repo: "", branch: "main", port: "3000", buildCommand: "npm run build", startCommand: "npm start", volumePath: "/workspace" });
   const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
-  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setF(v => ({ ...v, [k]: e.target.value }));
   async function submit() {
     setError(""); setLoading(true);
-    try { const d = await api<{ project: Project }>("/api/projects", { method: "POST", body: JSON.stringify({ ...form, port: Number(form.port) }) }); onCreated(d.project); }
+    try { const d = await api<{ project: Project }>("/api/projects", { method: "POST", body: JSON.stringify({ ...f, port: Number(f.port) }) }); onCreated(d.project); }
     catch (e: any) { setError(e.message); } finally { setLoading(false); }
   }
   return (
@@ -136,17 +117,17 @@ function NewProjectModal({ onClose, onCreated }: { onClose: () => void; onCreate
       <div className="modal">
         <h2>New project</h2>
         <div className="form-row">
-          <div className="form-group"><label>Project name</label><input value={form.name} onChange={set("name")} placeholder="my-app" /></div>
-          <div className="form-group"><label>Branch</label><input value={form.branch} onChange={set("branch")} /></div>
+          <div className="form-group"><label>Project name</label><input value={f.name} onChange={set("name")} placeholder="my-app" /></div>
+          <div className="form-group"><label>Branch</label><input value={f.branch} onChange={set("branch")} /></div>
         </div>
-        <div className="form-group"><label>GitHub repo</label><input value={form.repo} onChange={set("repo")} placeholder="owner/repo  or  https://github.com/owner/repo" /></div>
+        <div className="form-group"><label>GitHub repo</label><input value={f.repo} onChange={set("repo")} placeholder="owner/repo  or  https://github.com/owner/repo" /></div>
         <div className="form-row">
-          <div className="form-group"><label>Build command</label><input value={form.buildCommand} onChange={set("buildCommand")} /></div>
-          <div className="form-group"><label>Start command</label><input value={form.startCommand} onChange={set("startCommand")} /></div>
+          <div className="form-group"><label>Build command</label><input value={f.buildCommand} onChange={set("buildCommand")} /></div>
+          <div className="form-group"><label>Start command</label><input value={f.startCommand} onChange={set("startCommand")} /></div>
         </div>
         <div className="form-row">
-          <div className="form-group"><label>Volume path</label><input value={form.volumePath} onChange={set("volumePath")} /></div>
-          <div className="form-group"><label>Port</label><input value={form.port} onChange={set("port")} type="number" placeholder="3000" /></div>
+          <div className="form-group"><label>Volume path</label><input value={f.volumePath} onChange={set("volumePath")} /></div>
+          <div className="form-group"><label>Port</label><input value={f.port} onChange={set("port")} type="number" placeholder="3000" /></div>
         </div>
         {error && <p className="form-error">{error}</p>}
         <div className="form-actions">
@@ -163,7 +144,6 @@ function LogTerminal({ wsPath, live, label }: { wsPath: string; live: boolean; l
   const [lines, setLines] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     setLines([]); setDone(false);
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -177,15 +157,13 @@ function LogTerminal({ wsPath, live, label }: { wsPath: string; live: boolean; l
     };
     return () => ws.close();
   }, [wsPath]);
-
   useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [lines]);
-
   return (
     <div className="terminal">
       <div className="terminal-bar">
         <div className="terminal-dot red" /><div className="terminal-dot yellow" /><div className="terminal-dot green" />
         <span className="terminal-label" style={{ color: live && !done ? "var(--warn)" : "var(--live)" }}>
-          {label ?? (live && !done ? "● live" : "● done")}
+          {label ?? (live && !done ? "● building" : "● done")}
         </span>
       </div>
       <div className="terminal-body" ref={ref}>
@@ -197,15 +175,45 @@ function LogTerminal({ wsPath, live, label }: { wsPath: string; live: boolean; l
   );
 }
 
-// ── Env editor ─────────────────────────────────────────────────────────────
+// ── Env editor with file import ────────────────────────────────────────────
 function EnvEditor({ projectId, initial, onSaved }: { projectId: string; initial: Record<string, string>; onSaved: () => void }) {
   const [pairs, setPairs] = useState(() => Object.entries(initial).map(([k, v]) => ({ k, v })));
   const [saving, setSaving] = useState(false); const [saved, setSaved] = useState(false);
+  const [importText, setImportText] = useState(""); const [showImport, setShowImport] = useState(false);
+
+  function parseEnvFile(text: string) {
+    const parsed: { k: string; v: string }[] = [];
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq < 1) continue;
+      const k = line.slice(0, eq).trim();
+      let v = line.slice(eq + 1).trim();
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))
+        v = v.slice(1, -1);
+      parsed.push({ k, v });
+    }
+    return parsed;
+  }
+
+  function importEnv() {
+    const parsed = parseEnvFile(importText);
+    if (!parsed.length) return;
+    setPairs(existing => {
+      const map = new Map(existing.map(p => [p.k, p.v]));
+      parsed.forEach(p => map.set(p.k, p.v));
+      return Array.from(map.entries()).map(([k, v]) => ({ k, v }));
+    });
+    setImportText(""); setShowImport(false);
+  }
+
   async function save() {
     setSaving(true); setSaved(false);
     await api(`/api/projects/${projectId}/env`, { method: "PUT", body: JSON.stringify({ env: Object.fromEntries(pairs.filter(p => p.k).map(p => [p.k, p.v])) }) });
     setSaving(false); setSaved(true); onSaved(); setTimeout(() => setSaved(false), 2500);
   }
+
   return (
     <div>
       {pairs.map((pair, i) => (
@@ -215,8 +223,25 @@ function EnvEditor({ projectId, initial, onSaved }: { projectId: string; initial
           <button className="env-del-btn" onClick={() => setPairs(p => p.filter((_, j) => j !== i))}>×</button>
         </div>
       ))}
-      <div style={{ display: "flex", gap: "0.6rem", marginTop: "0.75rem" }}>
+
+      {showImport && (
+        <div style={{ marginTop: "0.75rem", marginBottom: "0.75rem" }}>
+          <textarea
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+            placeholder={"Paste .env file contents here:\n\nKEY=value\nANOTHER_KEY=another_value\n# Comments are ignored"}
+            style={{ width: "100%", minHeight: 140, padding: "0.65rem", borderRadius: 8, border: "1px solid var(--border2)", background: "rgba(255,255,255,0.03)", color: "var(--text)", fontFamily: "var(--mono)", fontSize: "0.82rem", resize: "vertical" }}
+          />
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+            <button className="btn btn-primary btn-sm" onClick={importEnv}>Import {parseEnvFile(importText).length} variable{parseEnvFile(importText).length !== 1 ? "s" : ""}</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowImport(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: "0.6rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
         <button className="btn btn-ghost btn-sm" onClick={() => setPairs(p => [...p, { k: "", v: "" }])}>+ Add variable</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => setShowImport(s => !s)}>⬆ Import .env file</button>
         <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}>{saving ? "Saving…" : saved ? "✓ Saved" : "Save changes"}</button>
       </div>
     </div>
@@ -235,7 +260,7 @@ function WebhookPanel({ project, onRegen }: { project: Project; onRegen: () => v
       <div className="card-header"><h3>GitHub webhook</h3></div>
       <div className="card-body">
         <p style={{ fontSize: "0.83rem", color: "var(--muted)", marginBottom: "1.25rem", lineHeight: 1.6 }}>
-          Add under your GitHub repo <strong>Settings → Webhooks → Add webhook</strong>. Content type: <code style={{ background: "rgba(255,255,255,0.07)", padding: "1px 6px", borderRadius: 4 }}>application/json</code>. Event: <strong>push</strong>.
+          Add under your repo <strong>Settings → Webhooks → Add webhook</strong>. Content type: <code style={{ background: "rgba(255,255,255,0.07)", padding: "1px 6px", borderRadius: 4 }}>application/json</code>. Event: <strong>push</strong>.
         </p>
         <div className="form-group"><label>Payload URL</label>
           <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -257,34 +282,50 @@ function WebhookPanel({ project, onRegen }: { project: Project; onRegen: () => v
 }
 
 // ── Project detail ─────────────────────────────────────────────────────────
+type DetailTab = "overview" | "logs" | "runtime" | "env" | "webhook" | "settings";
+
 function ProjectDetail({ token }: { token: string }) {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
-  const [tab, setTab] = useState<"overview" | "logs" | "runtime" | "env" | "webhook" | "settings">("overview");
+  const [tab, setTab] = useState<DetailTab>("overview");
   const [activeDepId, setActiveDepId] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
-  const [stats, setStats] = useState<ContainerStats>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState("");
-  const [sf, setSf] = useState({ repo: "", branch: "", buildCommand: "", startCommand: "", port: "3000", customDomain: "", memoryLimit: "", cpus: "" });
-  const [sfSaved, setSfSaved] = useState(false);
+  const [stats, setStats] = useState<ContainerStats>(null);
   const [containerWsKey, setContainerWsKey] = useState(0);
+  const [sf, setSf] = useState({ repo: "", branch: "", buildCommand: "", startCommand: "", port: "3000", customDomain: "", memoryLimit: "", cpus: "", notifyUrl: "", autoDeployEnabled: true });
+  const [sfSaved, setSfSaved] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
     const d = await api<{ project: Project; deployments: Deployment[] }>(`/api/projects/${id}`);
     setProject(d.project); setDeployments(d.deployments);
-    setSf({ repo: d.project.repo, branch: d.project.branch, buildCommand: d.project.buildCommand, startCommand: d.project.startCommand, port: String(d.project.port ?? 3000), customDomain: d.project.customDomain ?? "", memoryLimit: d.project.memoryLimit ?? "", cpus: d.project.cpus ?? "" });
+    setSf({ repo: d.project.repo, branch: d.project.branch, buildCommand: d.project.buildCommand, startCommand: d.project.startCommand, port: String(d.project.port ?? 3000), customDomain: d.project.customDomain ?? "", memoryLimit: d.project.memoryLimit ?? "", cpus: d.project.cpus ?? "", notifyUrl: d.project.notifyUrl ?? "", autoDeployEnabled: d.project.autoDeployEnabled ?? true });
     if (!activeDepId && d.deployments.length) setActiveDepId(d.deployments[0].id);
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Poll when building
   useEffect(() => {
     if (project?.status !== "building") return;
     const t = setInterval(load, 3000); return () => clearInterval(t);
   }, [project?.status, load]);
+
+  // Stats polling — proper top-level effect, conditional inside
+  useEffect(() => {
+    if (tab !== "runtime" || !project || project.status !== "live") return;
+    const fetchStats = () =>
+      api<{ stats: ContainerStats }>(`/api/projects/${project.id}/stats`)
+        .then(d => setStats(d.stats)).catch(() => {});
+    fetchStats();
+    const t = setInterval(fetchStats, 5000);
+    return () => clearInterval(t);
+  }, [tab, project?.status, project?.id]);
 
   async function deploy() {
     if (!project) return;
@@ -295,17 +336,23 @@ function ProjectDetail({ token }: { token: string }) {
     } catch (e: any) { setError(e.message); } finally { setDeploying(false); }
   }
 
-  async function restart() {
-    if (!project) return;
-    setRestarting(true);
-    try { await api(`/api/projects/${project.id}/restart`, { method: "POST", body: "{}" }); await load(); }
-    catch (e: any) { setError(e.message); }
-    finally { setRestarting(false); }
+  async function cancelDeploy() {
+    if (!activeDepId) return;
+    setCancelling(true);
+    try { await api(`/api/deployments/${activeDepId}/cancel`, { method: "POST", body: "{}" }); await load(); }
+    catch (e: any) { setError(e.message); } finally { setCancelling(false); }
   }
 
   async function rollback(depId: string) {
     const d = await api<{ deployment: Deployment }>(`/api/deployments/${depId}/rollback`, { method: "POST", body: "{}" });
     setActiveDepId(d.deployment.id); setTab("logs"); await load();
+  }
+
+  async function restart() {
+    if (!project) return;
+    setRestarting(true);
+    try { await api(`/api/projects/${project.id}/restart`, { method: "POST", body: "{}" }); await load(); }
+    catch (e: any) { setError(e.message); } finally { setRestarting(false); }
   }
 
   async function stopStart() {
@@ -322,7 +369,7 @@ function ProjectDetail({ token }: { token: string }) {
 
   async function saveSettings() {
     if (!project) return;
-    await api(`/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify({ ...sf, port: Number(sf.port), customDomain: sf.customDomain || undefined, memoryLimit: sf.memoryLimit || "", cpus: sf.cpus || "" }) });
+    await api(`/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify({ ...sf, port: Number(sf.port), customDomain: sf.customDomain || undefined, memoryLimit: sf.memoryLimit || "", cpus: sf.cpus || "", notifyUrl: sf.notifyUrl || "", autoDeployEnabled: sf.autoDeployEnabled }) });
     setSfSaved(true); setTimeout(() => setSfSaved(false), 2500); await load();
   }
 
@@ -331,25 +378,31 @@ function ProjectDetail({ token }: { token: string }) {
   const activeDep = deployments.find(d => d.id === activeDepId);
   const building = project.status === "building";
   const liveUrl = `https://${project.customDomain ?? project.domain ?? `${project.name}.your-domain.com`}`;
+  const activeBuildDep = deployments.find(d => d.status === "building" || d.status === "queued");
 
   return (
     <div className="page">
+      {/* Header */}
       <div className="detail-header">
         <div className="detail-header-info">
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
             <button className="btn btn-ghost btn-sm" onClick={() => nav("/")}>←</button>
             <h1>{project.name}</h1>
             <Badge status={project.status} />
+            {!project.autoDeployEnabled && <span className="badge badge-idle">auto-deploy off</span>}
           </div>
           <div className="detail-repo" style={{ marginTop: 4 }}>{project.repo} · {project.branch} · :{project.port}</div>
           {(project.customDomain ?? project.domain) && (
-            <a href={liveUrl} target="_blank" rel="noreferrer" className="project-domain" style={{ display: "inline-block", marginTop: 4 }}>
-              {liveUrl} ↗
-            </a>
+            <a href={liveUrl} target="_blank" rel="noreferrer" className="project-domain" style={{ display: "inline-block", marginTop: 4 }}>{liveUrl} ↗</a>
           )}
         </div>
         <div className="detail-header-actions">
           {error && <span style={{ color: "var(--danger)", fontSize: "0.82rem" }}>{error}</span>}
+          {building && activeBuildDep && (
+            <button className="btn btn-danger btn-sm" onClick={cancelDeploy} disabled={cancelling}>
+              {cancelling ? "Cancelling…" : "✕ Cancel"}
+            </button>
+          )}
           {project.status === "live" && <button className="btn btn-ghost btn-sm" onClick={stopStart}>⏹ Stop</button>}
           {project.status === "live" && <button className="btn btn-ghost btn-sm" onClick={restart} disabled={restarting}>{restarting ? "↺…" : "↺ Restart"}</button>}
           {project.status === "stopped" && <button className="btn btn-ghost btn-sm" onClick={stopStart}>▶ Start</button>}
@@ -359,12 +412,13 @@ function ProjectDetail({ token }: { token: string }) {
         </div>
       </div>
 
+      {/* Stats row */}
       <div className="stats-row">
         {[
-          { label: "Deployments", value: deployments.length },
+          { label: "Deployments", value: String(deployments.length) },
           { label: "Last deploy", value: deployments[0] ? timeAgo(deployments[0].createdAt) : "Never" },
           { label: "Duration", value: deployments[0]?.finishedAt ? duration(deployments[0].createdAt, deployments[0].finishedAt) : "—" },
-          { label: "Env vars", value: Object.keys(project.env).length },
+          { label: "Env vars", value: String(Object.keys(project.env).length) },
         ].map(s => (
           <div key={s.label} className="stat-card">
             <div className="stat-label">{s.label}</div>
@@ -373,6 +427,7 @@ function ProjectDetail({ token }: { token: string }) {
         ))}
       </div>
 
+      {/* Tabs */}
       <div className="tabs">
         {([
           ["overview", "⬡ Overview"],
@@ -382,10 +437,14 @@ function ProjectDetail({ token }: { token: string }) {
           ["webhook", "⚡ Webhook"],
           ["settings", "✎ Settings"],
         ] as const).map(([t, label]) => (
-          <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => { setTab(t); if (t === "runtime") setContainerWsKey(k => k + 1); }}>{label}</button>
+          <button key={t} className={`tab ${tab === t ? "active" : ""}`}
+            onClick={() => { setTab(t); if (t === "runtime") setContainerWsKey(k => k + 1); }}>
+            {label}
+          </button>
         ))}
       </div>
 
+      {/* Overview */}
       {tab === "overview" && (
         <div className="card">
           <div className="card-header"><h3>Deployment history</h3></div>
@@ -395,12 +454,18 @@ function ProjectDetail({ token }: { token: string }) {
               {deployments.map(dep => (
                 <div key={dep.id} className="deployment-row">
                   <Badge status={dep.status} />
-                  <span className="deployment-sha" style={{ cursor: "pointer" }} onClick={() => { setActiveDepId(dep.id); setTab("logs"); }}>{dep.commitSha.slice(0, 10)}</span>
+                  <span className="deployment-sha" style={{ cursor: "pointer" }}
+                    onClick={() => { setActiveDepId(dep.id); setTab("logs"); }}>{dep.commitSha.slice(0, 10)}</span>
                   <div className="deployment-meta" style={{ flex: 1 }}><TriggerPill by={dep.triggeredBy} /></div>
-                  <span className="deployment-time">{dep.finishedAt ? duration(dep.createdAt, dep.finishedAt) : "—"}</span>
+                  <span className="deployment-time">{dep.finishedAt ? duration(dep.createdAt, dep.finishedAt) : (dep.status === "building" ? "building…" : "—")}</span>
                   <span className="deployment-time">{timeAgo(dep.createdAt)}</span>
-                  {dep.imageTag && dep.status === "live" && dep.id !== deployments[0]?.id && (
-                    <button className="btn btn-ghost btn-sm" onClick={() => rollback(dep.id)} title="Rollback to this">↩</button>
+                  {dep.imageTag && dep.status === "live" && dep.id !== deployments.find(d => d.status === "live")?.id && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => rollback(dep.id)} title="Rollback">↩</button>
+                  )}
+                  {(dep.status === "building" || dep.status === "queued") && (
+                    <button className="btn btn-danger btn-sm" onClick={async () => {
+                      await api(`/api/deployments/${dep.id}/cancel`, { method: "POST", body: "{}" }); load();
+                    }}>✕</button>
                   )}
                 </div>
               ))}
@@ -409,6 +474,7 @@ function ProjectDetail({ token }: { token: string }) {
         </div>
       )}
 
+      {/* Build logs */}
       {tab === "logs" && (
         <div>
           {deployments.length > 1 && (
@@ -426,21 +492,7 @@ function ProjectDetail({ token }: { token: string }) {
         </div>
       )}
 
-      {tab === "runtime" && (() => {
-        // Poll stats every 5s when on runtime tab
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        useEffect(() => {
-          if (!project || project.status !== "live") return;
-          const fetchStats = () =>
-            api<{ stats: ContainerStats }>(`/api/projects/${project.id}/stats`)
-              .then(d => setStats(d.stats)).catch(() => {});
-          fetchStats();
-          const t = setInterval(fetchStats, 5000);
-          return () => clearInterval(t);
-        }, [project?.status]);
-        return null;
-      })()}
-
+      {/* Runtime */}
       {tab === "runtime" && (
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
@@ -452,8 +504,8 @@ function ProjectDetail({ token }: { token: string }) {
               {[
                 { label: "CPU", value: stats.cpu },
                 { label: "Memory", value: `${stats.memUsage} (${stats.memPercent})` },
-                { label: "Net in", value: stats.netIn },
-                { label: "Net out", value: stats.netOut },
+                { label: "Net ↓", value: stats.netIn },
+                { label: "Net ↑", value: stats.netOut },
                 { label: "PIDs", value: stats.pids },
               ].map(s => (
                 <div key={s.label} className="stat-card" style={{ minWidth: 0, flex: 1 }}>
@@ -469,18 +521,23 @@ function ProjectDetail({ token }: { token: string }) {
         </div>
       )}
 
+      {/* Environment */}
       {tab === "env" && (
         <div className="card">
           <div className="card-header"><h3>Environment variables</h3></div>
           <div className="card-body">
-            <p style={{ fontSize: "0.82rem", color: "var(--muted)", marginBottom: "1.25rem" }}>Injected at runtime. Redeploy to apply changes.</p>
+            <p style={{ fontSize: "0.82rem", color: "var(--muted)", marginBottom: "1.25rem" }}>
+              Injected at runtime. Redeploy to apply changes. You can also import a <code style={{ background: "rgba(255,255,255,0.07)", padding: "1px 5px", borderRadius: 4 }}>.env</code> file.
+            </p>
             <EnvEditor projectId={project.id} initial={project.env} onSaved={load} />
           </div>
         </div>
       )}
 
+      {/* Webhook */}
       {tab === "webhook" && <WebhookPanel project={project} onRegen={load} />}
 
+      {/* Settings */}
       {tab === "settings" && (
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           <div className="card">
@@ -495,23 +552,27 @@ function ProjectDetail({ token }: { token: string }) {
                 <div className="form-group"><label>Build command</label><input value={sf.buildCommand} onChange={e => setSf(f => ({ ...f, buildCommand: e.target.value }))} /></div>
                 <div className="form-group"><label>Start command</label><input value={sf.startCommand} onChange={e => setSf(f => ({ ...f, startCommand: e.target.value }))} /></div>
               </div>
+              <div className="form-group"><label>Custom domain</label>
+                <input value={sf.customDomain} onChange={e => setSf(f => ({ ...f, customDomain: e.target.value }))} placeholder="app.yourdomain.com — CNAME to your server, then redeploy" />
+              </div>
               <div className="form-row">
-                <div className="form-group">
-                  <label>Memory limit</label>
-                  <input value={sf.memoryLimit} onChange={e => setSf(f => ({ ...f, memoryLimit: e.target.value }))} placeholder="512m  or  1g  (blank = unlimited)" />
-                </div>
-                <div className="form-group">
-                  <label>CPU limit</label>
-                  <input value={sf.cpus} onChange={e => setSf(f => ({ ...f, cpus: e.target.value }))} placeholder="0.5  or  2  (blank = unlimited)" />
-                </div>
+                <div className="form-group"><label>Memory limit</label><input value={sf.memoryLimit} onChange={e => setSf(f => ({ ...f, memoryLimit: e.target.value }))} placeholder="512m  or  1g  (blank = unlimited)" /></div>
+                <div className="form-group"><label>CPU limit</label><input value={sf.cpus} onChange={e => setSf(f => ({ ...f, cpus: e.target.value }))} placeholder="0.5  or  2  (blank = unlimited)" /></div>
+              </div>
+              <div className="form-group"><label>Notify URL</label>
+                <input value={sf.notifyUrl} onChange={e => setSf(f => ({ ...f, notifyUrl: e.target.value }))} placeholder="https://hooks.slack.com/... or https://discord.com/api/webhooks/..." />
+                <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.3rem" }}>POST on every deploy success or failure. Discord webhooks auto-detected.</p>
               </div>
               <div className="form-group">
-                <label>Custom domain</label>
-                <input value={sf.customDomain} onChange={e => setSf(f => ({ ...f, customDomain: e.target.value }))} placeholder="app.yourdomain.com (CNAME → your server)" />
-                <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.3rem" }}>Leave blank to use the auto-assigned subdomain. Redeploy after changing.</p>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", textTransform: "none", letterSpacing: 0 }}>
+                  <input type="checkbox" checked={sf.autoDeployEnabled} onChange={e => setSf(f => ({ ...f, autoDeployEnabled: e.target.checked }))}
+                    style={{ width: 16, height: 16, cursor: "pointer" }} />
+                  <span style={{ fontSize: "0.88rem", fontWeight: 500 }}>Auto-deploy on push</span>
+                </label>
+                <p style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.3rem", marginLeft: "1.6rem" }}>When disabled, GitHub webhooks are accepted but builds are not triggered.</p>
               </div>
               <div className="form-actions">
-                <button className="btn btn-primary btn-sm" onClick={saveSettings}>{sfSaved ? "✓ Saved" : "Save"}</button>
+                <button className="btn btn-primary btn-sm" onClick={saveSettings}>{sfSaved ? "✓ Saved" : "Save settings"}</button>
               </div>
             </div>
           </div>
@@ -534,12 +595,10 @@ function ProjectDetail({ token }: { token: string }) {
 // ── Activity feed ──────────────────────────────────────────────────────────
 function ActivityFeed() {
   const nav = useNavigate();
-  const [activity, setActivity] = useState<(Deployment & { projectName: string })[]>([]);
+  const [activity, setActivity] = useState<any[]>([]);
   useEffect(() => {
     const load = () => api<{ activity: any[] }>("/api/activity").then(d => setActivity(d.activity)).catch(() => {});
-    load();
-    const t = setInterval(load, 15_000);
-    return () => clearInterval(t);
+    load(); const t = setInterval(load, 15_000); return () => clearInterval(t);
   }, []);
   if (!activity.length) return null;
   return (
@@ -563,11 +622,12 @@ function ActivityFeed() {
 }
 
 // ── Projects list ──────────────────────────────────────────────────────────
-function ProjectsList({ token: _token }: { token: string }) {
+function ProjectsList() {
   const nav = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
     const d = await api<{ projects: Project[] }>("/api/projects");
@@ -576,16 +636,31 @@ function ProjectsList({ token: _token }: { token: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // SSE — instant status updates without polling
-  useSSE((projectId, status) => {
-    setProjects(ps => ps.map(p => p.id === projectId ? { ...p, status: status as ProjectStatus } : p));
-  });
+  // SSE for instant status updates
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+    es.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "status")
+          setProjects(ps => ps.map(p => p.id === msg.projectId ? { ...p, status: msg.status } : p));
+      } catch {}
+    };
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, []);
 
-  // Fallback poll when building
+  // Fallback poll while building
   useEffect(() => {
     if (!projects.some(p => p.status === "building")) return;
     const t = setInterval(load, 5000); return () => clearInterval(t);
   }, [projects, load]);
+
+  const filtered = search.trim()
+    ? projects.filter(p => p.name.includes(search.toLowerCase()) || p.repo.toLowerCase().includes(search.toLowerCase()))
+    : projects;
 
   const counts = { live: projects.filter(p => p.status === "live").length, building: projects.filter(p => p.status === "building").length, failed: projects.filter(p => p.status === "failed").length };
 
@@ -601,11 +676,16 @@ function ProjectsList({ token: _token }: { token: string }) {
             {counts.failed > 0 && <span style={{ color: "var(--danger)", marginLeft: "0.75rem" }}>● {counts.failed} failed</span>}
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ New project</button>
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+          {projects.length > 3 && (
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search projects…"
+              style={{ padding: "0.5rem 0.75rem", borderRadius: 8, border: "1px solid var(--border2)", background: "rgba(255,255,255,0.04)", color: "var(--text)", fontFamily: "var(--mono)", fontSize: "0.82rem", width: 200 }} />
+          )}
+          <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ New project</button>
+        </div>
       </div>
 
-      {loading && <div className="empty"><div className="spinner" /></div>}
-
+      {loading && <div className="empty" style={{ padding: "3rem" }}><div className="spinner" /></div>}
       {!loading && projects.length === 0 && (
         <div className="empty">
           <div className="empty-icon">⬡</div>
@@ -613,9 +693,12 @@ function ProjectsList({ token: _token }: { token: string }) {
           <button className="btn btn-primary btn-sm" onClick={() => setShowNew(true)}>+ New project</button>
         </div>
       )}
+      {!loading && search && filtered.length === 0 && (
+        <div className="empty"><div className="empty-icon">🔍</div><p>No projects match "{search}"</p></div>
+      )}
 
       <div className="projects-grid">
-        {projects.map(p => (
+        {filtered.map(p => (
           <div key={p.id} className="project-card" onClick={() => nav(`/projects/${p.id}`)}>
             <div className="project-card-top">
               <div>
@@ -627,14 +710,15 @@ function ProjectsList({ token: _token }: { token: string }) {
             {(p.customDomain ?? p.domain) && <div className="project-domain">https://{p.customDomain ?? p.domain}</div>}
             <div className="project-card-meta">
               <span>{p.latestDeployment ? `${timeAgo(p.latestDeployment.createdAt)} · ${p.latestDeployment.triggeredBy}` : "No deploys yet"}</span>
-              <span>:{p.port}</span>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                {!p.autoDeployEnabled && <span style={{ fontSize: "0.68rem", color: "var(--muted)", border: "1px solid var(--border2)", borderRadius: 4, padding: "1px 5px" }}>manual</span>}
+                <span>:{p.port}</span>
+              </div>
             </div>
           </div>
         ))}
       </div>
-
       <ActivityFeed />
-
       {showNew && <NewProjectModal onClose={() => setShowNew(false)} onCreated={proj => { setShowNew(false); nav(`/projects/${proj.id}`); }} />}
     </div>
   );
@@ -662,14 +746,14 @@ function Sidebar({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 }
 
-// ── App shell ──────────────────────────────────────────────────────────────
+// ── App ────────────────────────────────────────────────────────────────────
 function AppShell({ token, user, onLogout }: { token: string; user: User; onLogout: () => void }) {
   return (
     <div className="shell">
       <Sidebar user={user} onLogout={onLogout} />
       <main className="main">
         <Routes>
-          <Route path="/" element={<ProjectsList token={token} />} />
+          <Route path="/" element={<ProjectsList />} />
           <Route path="/projects/:id" element={<ProjectDetail token={token} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -678,7 +762,6 @@ function AppShell({ token, user, onLogout }: { token: string; user: User; onLogo
   );
 }
 
-// ── Root ───────────────────────────────────────────────────────────────────
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("nexus-token"));
   const [user, setUser] = useState<User | null>(null);

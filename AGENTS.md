@@ -61,6 +61,7 @@ GitHub push
 | POST | /api/webhooks/github/:projectId | HMAC | GitHub push webhook |
 | WS | /api/log-stream?deploymentId=&token= | query | Build log stream |
 | WS | /api/container-stream?projectId=&token= | query | Runtime log stream |
+| POST | /api/deployments/:id/cancel | Bearer | Cancel in-progress build |
 
 ## Auth
 Token accepted as:

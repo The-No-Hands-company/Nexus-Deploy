@@ -7,7 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { config, ensureDataDir } from "./lib/config.js";
 import { loadDb, saveDb, writeDb } from "./lib/store.js";
 import { createToken, hashPassword, newId, verifyPassword, verifyToken } from "./lib/auth.js";
-import { createDeployment, runDeploy, runRollback, subscribeToDeployment, isBuilding } from "./lib/build.js";
+import { createDeployment, runDeploy, runRollback, subscribeToDeployment, isBuilding, cancelBuild } from "./lib/build.js";
 import { dockerStop, dockerStart, dockerRemove, dockerRestart, dockerStatus, dockerStats, dockerLogs } from "./lib/docker.js";
 import { startStatusSync } from "./lib/status-sync.js";
 import { onStatusChange } from "./lib/events.js";
@@ -106,6 +106,8 @@ app.post("/api/projects", requireAuth, (_req, res) => {
     port: Number(port ?? 3000),
     env: {}, status: "idle",
     webhookSecret: crypto.randomBytes(24).toString("hex"),
+    autoDeployEnabled: true,
+    notifyUrl: undefined,
     createdAt: Date.now(), updatedAt: Date.now(),
   };
   db.projects.unshift(project); saveDb(db);
@@ -134,6 +136,8 @@ app.put("/api/projects/:id", requireAuth, async (req, res) => {
     if (customDomain !== undefined) p.customDomain = customDomain ? String(customDomain) : undefined;
     if ("memoryLimit" in req.body) p.memoryLimit = req.body.memoryLimit || undefined;
     if ("cpus" in req.body) p.cpus = req.body.cpus || undefined;
+    if ("notifyUrl" in req.body) p.notifyUrl = req.body.notifyUrl || undefined;
+    if ("autoDeployEnabled" in req.body) p.autoDeployEnabled = Boolean(req.body.autoDeployEnabled);
     p.updatedAt = Date.now();
   });
   const updated = loadDb().projects.find(p => p.id === req.params.id);
@@ -210,6 +214,23 @@ app.post("/api/deployments/:id/rollback", requireAuth, async (req, res) => {
   res.json({ deployment: dep });
 });
 
+// ── Cancel build ──────────────────────────────────────────────────────────
+app.post("/api/deployments/:id/cancel", requireAuth, async (req, res) => {
+  const dep = loadDb().deployments.find(d => d.id === req.params.id);
+  if (!dep) return res.status(404).json({ error: "Deployment not found" });
+  if (dep.status !== "building" && dep.status !== "queued")
+    return res.status(400).json({ error: "Deployment is not in progress" });
+  const cancelled = await cancelBuild(dep.id);
+  if (!cancelled) {
+    // Fallback: mark cancelled in DB directly
+    await writeDb(db => {
+      const d = db.deployments.find(d => d.id === dep.id);
+      if (d) { d.status = "cancelled"; d.finishedAt = Date.now(); }
+    });
+  }
+  res.json({ ok: true, cancelled });
+});
+
 // ── Stop / Start ───────────────────────────────────────────────────────────
 app.post("/api/projects/:id/stop", requireAuth, async (req, res) => {
   const project = loadDb().projects.find(p => p.id === req.params.id);
@@ -284,6 +305,7 @@ app.post("/api/webhooks/github/:projectId", express.raw({ type: "*/*" }), async 
 
   const branch = (payload?.ref as string)?.replace("refs/heads/", "");
   if (branch && branch !== project.branch) return res.json({ ok: true, skipped: `branch ${branch} ≠ ${project.branch}` });
+  if (!project.autoDeployEnabled) return res.json({ ok: true, skipped: "auto-deploy disabled" });
   if (isBuilding(project.id)) return res.json({ ok: true, skipped: "build in progress" });
 
   const dep = createDeployment(project, String(payload?.after ?? "webhook"), "webhook");
@@ -374,7 +396,7 @@ startStatusSync(30_000);
 server.listen(config.port, () => {
   console.log(`
 ╔════════════════════════════════════════╗
-║        NEXUS DEPLOY  v0.3.0           ║
+║        NEXUS DEPLOY  v0.4.0           ║
 ║   The No Hands Company · Free forever ║
 ╠════════════════════════════════════════╣
 ║  ${config.baseUrl.padEnd(38)}║
