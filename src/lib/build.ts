@@ -145,7 +145,25 @@ async function runContainer(project: Project, deploymentId: string, imageTag: st
   const containerName = `nexus-app-${project.name}`;
 
   log(`[nexus] Starting container → https://${domain}`);
-  const containerId = await dockerRun({ image: imageTag, name: containerName, env, domain, port: project.port ?? 3000, network: config.dockerNetwork, onLine: log });
+  // Volume mounts: persist data across deploys
+  const volumes: string[] = [];
+  if (project.volumePath && project.volumePath !== "/workspace") {
+    // Named volume keyed to project so data survives redeployments
+    volumes.push(`nexus-vol-${project.name}:${project.volumePath}`);
+  }
+
+  const containerId = await dockerRun({
+    image: imageTag,
+    name: containerName,
+    env,
+    domain,
+    port: project.port ?? 3000,
+    network: config.dockerNetwork,
+    onLine: log,
+    volumes,
+    memoryLimit: project.memoryLimit || undefined,
+    cpus: project.cpus || undefined,
+  });
   log(`[nexus] ✅ Live at https://${domain}`);
 
   await setDepStatus(deploymentId, "live");

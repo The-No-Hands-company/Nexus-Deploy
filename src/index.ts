@@ -8,7 +8,7 @@ import { config, ensureDataDir } from "./lib/config.js";
 import { loadDb, saveDb, writeDb } from "./lib/store.js";
 import { createToken, hashPassword, newId, verifyPassword, verifyToken } from "./lib/auth.js";
 import { createDeployment, runDeploy, runRollback, subscribeToDeployment, isBuilding } from "./lib/build.js";
-import { dockerStop, dockerStart, dockerRemove, dockerStatus, dockerLogs } from "./lib/docker.js";
+import { dockerStop, dockerStart, dockerRemove, dockerRestart, dockerStatus, dockerStats, dockerLogs } from "./lib/docker.js";
 import { startStatusSync } from "./lib/status-sync.js";
 import { onStatusChange } from "./lib/events.js";
 import { requireAuth, type AuthedRequest } from "./middleware/auth.js";
@@ -121,6 +121,7 @@ app.get("/api/projects/:id", requireAuth, (req, res) => {
 
 app.put("/api/projects/:id", requireAuth, async (req, res) => {
   const { repo, branch, buildCommand, startCommand, volumePath, port, customDomain } = req.body ?? {};
+  // memoryLimit and cpus handled via req.body directly below
   await writeDb(db => {
     const p = db.projects.find(p => p.id === req.params.id);
     if (!p) return;
@@ -131,6 +132,8 @@ app.put("/api/projects/:id", requireAuth, async (req, res) => {
     if (volumePath !== undefined) p.volumePath = String(volumePath);
     if (port !== undefined) p.port = Number(port);
     if (customDomain !== undefined) p.customDomain = customDomain ? String(customDomain) : undefined;
+    if ("memoryLimit" in req.body) p.memoryLimit = req.body.memoryLimit || undefined;
+    if ("cpus" in req.body) p.cpus = req.body.cpus || undefined;
     p.updatedAt = Date.now();
   });
   const updated = loadDb().projects.find(p => p.id === req.params.id);
@@ -222,6 +225,25 @@ app.post("/api/projects/:id/start", requireAuth, async (req, res) => {
   await dockerStart(`nexus-app-${project.name}`);
   await writeDb(db => { const p = db.projects.find(p => p.id === req.params.id); if (p) { p.status = "live"; p.updatedAt = Date.now(); } });
   res.json({ ok: true });
+});
+
+// ── Restart ───────────────────────────────────────────────────────────────
+app.post("/api/projects/:id/restart", requireAuth, async (req, res) => {
+  const project = loadDb().projects.find(p => p.id === req.params.id);
+  if (!project) return res.status(404).json({ error: "Not found" });
+  if (!project.containerId) return res.status(400).json({ error: "No container to restart" });
+  await dockerRestart(`nexus-app-${project.name}`);
+  await writeDb(db => { const p = db.projects.find(p => p.id === req.params.id); if (p) { p.status = "live"; p.updatedAt = Date.now(); } });
+  res.json({ ok: true });
+});
+
+// ── Container stats ────────────────────────────────────────────────────────
+app.get("/api/projects/:id/stats", requireAuth, async (req, res) => {
+  const project = loadDb().projects.find(p => p.id === req.params.id);
+  if (!project) return res.status(404).json({ error: "Not found" });
+  if (project.status !== "live") return res.json({ stats: null, reason: "not running" });
+  const stats = await dockerStats(`nexus-app-${project.name}`);
+  res.json({ stats });
 });
 
 // ── Deployments ────────────────────────────────────────────────────────────
@@ -327,20 +349,23 @@ wssContainer.on("connection", (socket: WebSocket, req) => {
 
   socket.send(JSON.stringify({ type: "info", line: `[nexus] Streaming logs from ${containerName}…` }));
 
-  // Stream logs — dockerLogs tails -f until the socket closes
-  dockerLogs(containerName, line => {
-    if (!closed && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "log", line }));
+  // dockerLogs now returns a kill() function — call on WS close to stop the process
+  const killLogs = dockerLogs(
+    containerName,
+    line => {
+      if (!closed && socket.readyState === WebSocket.OPEN)
+        socket.send(JSON.stringify({ type: "log", line }));
+    },
+    err => {
+      if (!closed && socket.readyState === WebSocket.OPEN) {
+        if (err) socket.send(JSON.stringify({ type: "error", line: `[nexus] ${err.message}` }));
+        socket.close();
+      }
     }
-  }).catch(err => {
-    if (!closed && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "error", line: `[nexus] ${err.message}` }));
-      socket.close();
-    }
-  });
+  );
 
   const hb = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" })); else clearInterval(hb); }, 15_000);
-  socket.on("close", () => { closed = true; clearInterval(hb); });
+  socket.on("close", () => { closed = true; clearInterval(hb); killLogs(); });
 });
 
 // ── Boot ───────────────────────────────────────────────────────────────────

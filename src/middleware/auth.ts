@@ -4,14 +4,21 @@ import { loadDb } from "../lib/store.js";
 
 export type AuthedRequest = Request & { userId?: string };
 
+/**
+ * Auth middleware — accepts token from:
+ *   1. Authorization: Bearer <token>  (API calls)
+ *   2. ?token=<token>                 (SSE / WebSocket where headers can't be set)
+ */
 export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) return res.status(401).json({ error: "Unauthorized" });
+  const queryToken = req.query.token as string | undefined;
+  const raw = header?.startsWith("Bearer ") ? header.slice(7) : queryToken;
+
+  if (!raw) return res.status(401).json({ error: "Unauthorized" });
+
   try {
-    const token = header.slice(7);
-    const decoded = verifyToken(token);
-    const db = loadDb();
-    const user = db.users.find(u => u.id === decoded.sub);
+    const decoded = verifyToken(raw);
+    const user = loadDb().users.find(u => u.id === decoded.sub);
     if (!user) return res.status(401).json({ error: "Unauthorized" });
     req.userId = user.id;
     next();

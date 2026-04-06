@@ -10,6 +10,7 @@ type Project = {
   port: number; env: Record<string, string>; status: ProjectStatus;
   domain?: string; customDomain?: string;
   containerId?: string; imageTag?: string; webhookSecret?: string;
+  memoryLimit?: string; cpus?: string;
   createdAt: number; updatedAt: number;
   latestDeployment?: Deployment | null;
 };
@@ -21,6 +22,12 @@ type Deployment = {
   logs: string[]; createdAt: number; finishedAt?: number;
   projectName?: string;
 };
+
+// ── Types (extra) ─────────────────────────────────────────────────────────
+type ContainerStats = {
+  cpu: string; memUsage: string; memLimit: string;
+  memPercent: string; netIn: string; netOut: string; pids: string;
+} | null;
 
 // ── API ────────────────────────────────────────────────────────────────────
 const getToken = () => localStorage.getItem("nexus-token") ?? "";
@@ -69,11 +76,7 @@ function useSSE(onStatus: (projectId: string, status: ProjectStatus) => void) {
   useEffect(() => {
     const token = getToken();
     if (!token) return;
-    const es = new EventSource(`/api/events`, { });
-    // EventSource doesn't support custom headers — pass token via cookie or use a workaround
-    // For now: re-auth on connection using a one-time token query approach
-    // SSE will work because the auth middleware checks Bearer header
-    // We'll handle it via the polling fallback if SSE fails
+    const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
     es.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -262,8 +265,10 @@ function ProjectDetail({ token }: { token: string }) {
   const [tab, setTab] = useState<"overview" | "logs" | "runtime" | "env" | "webhook" | "settings">("overview");
   const [activeDepId, setActiveDepId] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
+  const [stats, setStats] = useState<ContainerStats>(null);
+  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState("");
-  const [sf, setSf] = useState({ repo: "", branch: "", buildCommand: "", startCommand: "", port: "3000", customDomain: "" });
+  const [sf, setSf] = useState({ repo: "", branch: "", buildCommand: "", startCommand: "", port: "3000", customDomain: "", memoryLimit: "", cpus: "" });
   const [sfSaved, setSfSaved] = useState(false);
   const [containerWsKey, setContainerWsKey] = useState(0);
 
@@ -271,7 +276,7 @@ function ProjectDetail({ token }: { token: string }) {
     if (!id) return;
     const d = await api<{ project: Project; deployments: Deployment[] }>(`/api/projects/${id}`);
     setProject(d.project); setDeployments(d.deployments);
-    setSf({ repo: d.project.repo, branch: d.project.branch, buildCommand: d.project.buildCommand, startCommand: d.project.startCommand, port: String(d.project.port ?? 3000), customDomain: d.project.customDomain ?? "" });
+    setSf({ repo: d.project.repo, branch: d.project.branch, buildCommand: d.project.buildCommand, startCommand: d.project.startCommand, port: String(d.project.port ?? 3000), customDomain: d.project.customDomain ?? "", memoryLimit: d.project.memoryLimit ?? "", cpus: d.project.cpus ?? "" });
     if (!activeDepId && d.deployments.length) setActiveDepId(d.deployments[0].id);
   }, [id]);
 
@@ -288,6 +293,14 @@ function ProjectDetail({ token }: { token: string }) {
       const d = await api<{ deployment: Deployment }>(`/api/projects/${project.id}/deploy`, { method: "POST", body: JSON.stringify({ commitSha: "manual" }) });
       setActiveDepId(d.deployment.id); setTab("logs"); await load();
     } catch (e: any) { setError(e.message); } finally { setDeploying(false); }
+  }
+
+  async function restart() {
+    if (!project) return;
+    setRestarting(true);
+    try { await api(`/api/projects/${project.id}/restart`, { method: "POST", body: "{}" }); await load(); }
+    catch (e: any) { setError(e.message); }
+    finally { setRestarting(false); }
   }
 
   async function rollback(depId: string) {
@@ -309,7 +322,7 @@ function ProjectDetail({ token }: { token: string }) {
 
   async function saveSettings() {
     if (!project) return;
-    await api(`/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify({ ...sf, port: Number(sf.port), customDomain: sf.customDomain || undefined }) });
+    await api(`/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify({ ...sf, port: Number(sf.port), customDomain: sf.customDomain || undefined, memoryLimit: sf.memoryLimit || "", cpus: sf.cpus || "" }) });
     setSfSaved(true); setTimeout(() => setSfSaved(false), 2500); await load();
   }
 
@@ -338,6 +351,7 @@ function ProjectDetail({ token }: { token: string }) {
         <div className="detail-header-actions">
           {error && <span style={{ color: "var(--danger)", fontSize: "0.82rem" }}>{error}</span>}
           {project.status === "live" && <button className="btn btn-ghost btn-sm" onClick={stopStart}>⏹ Stop</button>}
+          {project.status === "live" && <button className="btn btn-ghost btn-sm" onClick={restart} disabled={restarting}>{restarting ? "↺…" : "↺ Restart"}</button>}
           {project.status === "stopped" && <button className="btn btn-ghost btn-sm" onClick={stopStart}>▶ Start</button>}
           <button className="btn btn-primary btn-sm" onClick={deploy} disabled={deploying || building}>
             {deploying || building ? <><div className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> Building…</> : "↑ Deploy"}
@@ -412,12 +426,43 @@ function ProjectDetail({ token }: { token: string }) {
         </div>
       )}
 
+      {tab === "runtime" && (() => {
+        // Poll stats every 5s when on runtime tab
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        useEffect(() => {
+          if (!project || project.status !== "live") return;
+          const fetchStats = () =>
+            api<{ stats: ContainerStats }>(`/api/projects/${project.id}/stats`)
+              .then(d => setStats(d.stats)).catch(() => {});
+          fetchStats();
+          const t = setInterval(fetchStats, 5000);
+          return () => clearInterval(t);
+        }, [project?.status]);
+        return null;
+      })()}
+
       {tab === "runtime" && (
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
             <p style={{ fontSize: "0.83rem", color: "var(--muted)" }}>Live stdout/stderr from your running container.</p>
             <button className="btn btn-ghost btn-sm" onClick={() => setContainerWsKey(k => k + 1)}>↺ Reconnect</button>
           </div>
+          {stats && project.status === "live" && (
+            <div className="stats-row" style={{ marginBottom: "1rem" }}>
+              {[
+                { label: "CPU", value: stats.cpu },
+                { label: "Memory", value: `${stats.memUsage} (${stats.memPercent})` },
+                { label: "Net in", value: stats.netIn },
+                { label: "Net out", value: stats.netOut },
+                { label: "PIDs", value: stats.pids },
+              ].map(s => (
+                <div key={s.label} className="stat-card" style={{ minWidth: 0, flex: 1 }}>
+                  <div className="stat-label">{s.label}</div>
+                  <div className="stat-value" style={{ fontSize: "0.88rem" }}>{s.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
           {project.status === "live" || project.status === "building"
             ? <LogTerminal key={containerWsKey} wsPath={`/api/container-stream?projectId=${project.id}&token=${token}`} live={true} label={project.status === "live" ? "● streaming" : "● starting…"} />
             : <div className="empty"><div className="empty-icon">🖥</div><p>Container is {project.status}. Start it to stream logs.</p></div>}
@@ -449,6 +494,16 @@ function ProjectDetail({ token }: { token: string }) {
               <div className="form-row">
                 <div className="form-group"><label>Build command</label><input value={sf.buildCommand} onChange={e => setSf(f => ({ ...f, buildCommand: e.target.value }))} /></div>
                 <div className="form-group"><label>Start command</label><input value={sf.startCommand} onChange={e => setSf(f => ({ ...f, startCommand: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Memory limit</label>
+                  <input value={sf.memoryLimit} onChange={e => setSf(f => ({ ...f, memoryLimit: e.target.value }))} placeholder="512m  or  1g  (blank = unlimited)" />
+                </div>
+                <div className="form-group">
+                  <label>CPU limit</label>
+                  <input value={sf.cpus} onChange={e => setSf(f => ({ ...f, cpus: e.target.value }))} placeholder="0.5  or  2  (blank = unlimited)" />
+                </div>
               </div>
               <div className="form-group">
                 <label>Custom domain</label>

@@ -26,6 +26,8 @@ export type Project = {
   containerId?: string;
   imageTag?: string;
   webhookSecret?: string;
+  memoryLimit?: string;     // e.g. '512m', '1g' — empty = unlimited
+  cpus?: string;            // e.g. '0.5', '2' — empty = unlimited
   createdAt: number;
   updatedAt: number;
 };
@@ -55,3 +57,7 @@ export type Session = {
 export type SSEEvent =
   | { type: "status"; projectId: string; status: ProjectStatus }
   | { type: "ping" };
+
+// Project resource limits (passed to docker run)
+// memoryLimit: "512m" | "1g" | "2g" | "" (no limit)
+// cpus: "0.5" | "1" | "2" | "" (no limit)
