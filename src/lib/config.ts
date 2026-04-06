@@ -6,6 +6,7 @@ const root = process.env.DATA_DIR ?? "/workspace";
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   baseUrl: process.env.BASE_URL ?? "http://localhost:3000",
+  baseDomain: process.env.BASE_DOMAIN ?? "localhost",
   dataDir: root,
   dbPath: path.join(root, "nexus-deploy.json"),
   appSecret: process.env.APP_SECRET ?? "change-me",
@@ -14,6 +15,8 @@ export const config = {
   adminEmail: process.env.ADMIN_EMAIL ?? "owner@the-no-hands.company",
   adminPassword: process.env.ADMIN_PASSWORD ?? "change-me",
   allowRegistration: (process.env.ALLOW_REGISTRATION ?? "false") === "true",
+  webhookSecret: process.env.WEBHOOK_SECRET ?? "",
+  dockerNetwork: process.env.DOCKER_NETWORK ?? "nexus-net",
 };
 
 export function ensureDataDir() {

@@ -23,9 +23,12 @@ export type Project = {
   domain?: string;
   containerId?: string;
   imageTag?: string;
+  webhookSecret?: string;
   createdAt: number;
   updatedAt: number;
 };
+
+export type DeployTrigger = "manual" | "webhook" | "rollback";
 
 export type DeploymentStatus = "queued" | "building" | "live" | "failed";
 
@@ -33,7 +36,7 @@ export type Deployment = {
   id: string;
   projectId: string;
   commitSha: string;
-  triggeredBy: "manual" | "webhook";
+  triggeredBy: DeployTrigger;
   status: DeploymentStatus;
   imageTag: string;
   logs: string[];
