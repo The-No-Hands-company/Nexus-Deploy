@@ -19,16 +19,19 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { font-size: 15px; }
+html { font-size: 15px; -webkit-text-size-adjust: 100%; }
 body {
   font-family: var(--sans);
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
   line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; }
+button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 
 /* ── Layout ──────────────────────────────────────────────────────────────── */
 .shell {
@@ -84,16 +87,19 @@ button, input, select, textarea { font: inherit; }
   font-size: 0.88rem;
   font-weight: 500;
   color: var(--muted);
-  transition: all 0.15s;
+  transition: background-color 0.15s, color 0.15s;
   cursor: pointer;
   border: none;
   background: none;
   width: 100%;
   text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 .nav-link:hover { background: rgba(255,255,255,0.05); color: var(--text); }
 .nav-link.active { background: rgba(0,212,170,0.1); color: var(--accent); }
-.nav-link .icon { font-size: 1rem; flex-shrink: 0; }
+.nav-link .icon { font-size: 1rem; flex-shrink: 0; pointer-events: none; }
 
 .sidebar-user {
   padding: 1rem 1.25rem;

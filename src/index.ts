@@ -16,7 +16,7 @@ import type { Project, User } from "./types.js";
 
 ensureDataDir();
 const app = express();
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({ contentSecurityPolicy: false, frameguard: false }));
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
@@ -315,7 +315,7 @@ app.post("/api/webhooks/github/:projectId", express.raw({ type: "*/*" }), async 
 
 // ── Static ─────────────────────────────────────────────────────────────────
 app.use(express.static("web/dist"));
-app.get("*", (_req, res) => res.sendFile(process.cwd() + "/web/dist/index.html"));
+app.use((_req, res) => res.sendFile(process.cwd() + "/web/dist/index.html"));
 
 // ── WebSocket: build log stream ────────────────────────────────────────────
 const server = createServer(app);
