@@ -11,6 +11,7 @@ import { createDeployment, runDeploy, runRollback, subscribeToDeployment, isBuil
 import { dockerStop, dockerStart, dockerRemove, dockerRestart, dockerStatus, dockerStats, dockerLogs } from "./lib/docker.js";
 import { startStatusSync } from "./lib/status-sync.js";
 import { onStatusChange } from "./lib/events.js";
+import { describeNexusAiIntegration, requestDeployAssistantSuggestion } from "./lib/ai.js";
 import { requireAuth, type AuthedRequest } from "./middleware/auth.js";
 import type { Project, User } from "./types.js";
 
@@ -38,6 +39,36 @@ await seedAdmin();
 // ── Health ─────────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, name: "nexus-deploy", version: "0.3.0", time: new Date().toISOString() });
+});
+
+// ── Nexus AI integration contract ─────────────────────────────────────────
+app.get("/api/ai/integration", requireAuth, (_req, res) => {
+  res.json({ integration: describeNexusAiIntegration() });
+});
+
+app.post("/api/ai/deploy-assist", requireAuth, async (req, res) => {
+  const prompt = String(req.body?.prompt ?? "").trim();
+  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+
+  try {
+    const suggestion = await requestDeployAssistantSuggestion({
+      prompt,
+      model: typeof req.body?.model === "string" ? req.body.model : undefined,
+      temperature: typeof req.body?.temperature === "number" ? req.body.temperature : undefined,
+      context: {
+        projectId: req.body?.projectId,
+        repo: req.body?.repo,
+        branch: req.body?.branch,
+        buildCommand: req.body?.buildCommand,
+        startCommand: req.body?.startCommand,
+      },
+    });
+    res.json(suggestion);
+  } catch (error) {
+    const message = (error as Error).message;
+    const status = message.includes("not configured") ? 503 : 502;
+    res.status(status).json({ error: message });
+  }
 });
 
 // ── Auth ───────────────────────────────────────────────────────────────────

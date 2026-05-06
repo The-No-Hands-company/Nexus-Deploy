@@ -17,6 +17,9 @@ export const config = {
   allowRegistration: (process.env.ALLOW_REGISTRATION ?? "false") === "true",
   webhookSecret: process.env.WEBHOOK_SECRET ?? "",
   dockerNetwork: process.env.DOCKER_NETWORK ?? "nexus-net",
+  nexusAiUrl: process.env.NEXUS_AI_URL ?? "",
+  nexusAiApiKey: process.env.NEXUS_AI_API_KEY ?? "",
+  nexusAiCompletionPath: process.env.NEXUS_AI_COMPLETION_PATH ?? "/v1/chat/completions",
 };
 
 export function ensureDataDir() {
