@@ -11,7 +11,10 @@
     "build:web": "npm --prefix web run build",
     "build:server": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check src web/src",
+    "format": "biome check --write src web/src",
+    "check": "npm run typecheck && npm run lint"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
@@ -22,6 +25,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.1",

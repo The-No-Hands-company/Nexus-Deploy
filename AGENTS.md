@@ -79,6 +79,12 @@ Token accepted as:
 - Volume naming: `nexus-vol-{project-name}` (mounted at project.volumePath)
 - Never add billing, limits, or feature gates. Free forever.
 
+## Standards Enforcement
+- Follow ../docs/ENGINEERING_STANDARDS.md as the baseline for TypeScript quality, API behavior, observability, and security.
+- Preserve event-driven deployment flow. GitHub webhooks, WS streams, SSE updates, and status propagation are the preferred coordination model; do not regress to polling-heavy orchestration.
+- Treat Nexus-Cloud as the upstream ecosystem nerve system for registration, topology, and routing coordination.
+- Keep degraded-mode behavior explicit: if Docker, GitHub, or a downstream dependency fails, surface that through state changes, logs, and retry/circuit logic rather than silent failure.
+
 ## Dev
 ```bash
 npm install && npm --prefix web install
@@ -86,3 +92,7 @@ npm run dev          # tsx watch + vite (with /api proxy)
 npm run build        # prod build
 npm run typecheck    # tsc --noEmit
 ```
+
+## Validation Target
+- `npm run check`
+- `npm test` when behavior changes touch runtime code
