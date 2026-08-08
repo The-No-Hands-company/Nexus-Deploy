@@ -27,6 +27,10 @@ export const config = {
   adminEmail: process.env.ADMIN_EMAIL ?? "owner@the-no-hands.company",
   adminPassword: process.env.ADMIN_PASSWORD ?? "change-me",
   allowRegistration: (process.env.ALLOW_REGISTRATION ?? "false") === "true",
+  // Identity is owned by Nexus-Auth for the whole ecosystem, not by this app.
+  // See src/middleware/auth.ts.
+  nexusAuthUrl: process.env.NEXUS_AUTH_URL ?? "http://localhost:4310",
+  nexusAuthTimeoutMs: Number(process.env.NEXUS_AUTH_TIMEOUT_MS ?? 5000),
   webhookSecret: process.env.WEBHOOK_SECRET ?? "",
   dockerNetwork: process.env.DOCKER_NETWORK ?? "nexus-net",
   nexusAiUrl: process.env.NEXUS_AI_URL ?? "",
