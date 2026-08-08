@@ -1,7 +1,19 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-const root = process.env.DATA_DIR ?? "/workspace";
+// Default the data root somewhere the running user can actually write.
+//
+// This used to default to "/workspace", a path at the filesystem root that only
+// exists inside the container image. Started any other way — a self-hoster on
+// their own machine, which is the deployment shape this project targets — the
+// first ensureDataDir() died with EACCES: mkdir '/workspace' and the service
+// never came up. ~/nexus-workspace matches the convention Nexus-Computer
+// already settled on for the same bug.
+//
+// DATA_DIR still wins, so container images can keep passing DATA_DIR=/workspace.
+const root =
+  process.env.DATA_DIR ?? path.join(os.homedir(), "nexus-workspace", "deploy");
 
 export const config = {
   port: Number(process.env.PORT ?? 3000),
