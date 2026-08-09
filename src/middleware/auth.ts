@@ -79,6 +79,41 @@ export async function verifyWithNexusAuth(token: string): Promise<NexusIdentity 
   }
 }
 
+
+/**
+ * Send a browser to the ecosystem sign-in page instead of answering 401.
+ *
+ * The apex hosts the only login form, but nothing pointed at it: an
+ * unauthenticated navigation got a bare JSON 401, which a person sees as a wall
+ * of text rather than a way in. API clients still get the 401 they can act on —
+ * the two are distinguished by whether the request looks like a navigation
+ * (Accept includes text/html and it is a GET), not by guessing from user agents.
+ *
+ * The redirect carries the URL the user was trying to reach, so they land back
+ * where they meant to be. Nexus-Auth refuses any redirect target outside the
+ * parent domain, so this cannot be turned into an open redirect from here.
+ */
+function wantsHtml(req: Request): boolean {
+  return req.method === "GET" && (req.headers.accept ?? "").includes("text/html");
+}
+
+function loginUrlFor(req: Request): string {
+  const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;
+  const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.get("host") ?? "";
+  const here = `${proto}://${host}${req.originalUrl}`;
+  const base = config.nexusAuthPublicUrl.replace(/\/+$/, "");
+  return `${base}/login?redirect=${encodeURIComponent(here)}`;
+}
+
+/** 401 for machines, a trip to the sign-in page for people. */
+function denyUnauthenticated(req: Request, res: Response): void {
+  if (wantsHtml(req)) {
+    res.redirect(302, loginUrlFor(req));
+    return;
+  }
+  res.status(401).json({ error: "Unauthorized" });
+}
+
 export async function requireAuth(
   req: AuthedRequest,
   res: Response,
@@ -89,7 +124,7 @@ export async function requireAuth(
   const raw = bearer ?? readSessionCookie(req) ?? (req.query.token as string | undefined);
 
   if (!raw) {
-    res.status(401).json({ error: "Unauthorized" });
+    denyUnauthenticated(req, res);
     return;
   }
 
@@ -113,7 +148,7 @@ export async function requireAuth(
   }
 
   if (!response.ok) {
-    res.status(401).json({ error: "Unauthorized" });
+    denyUnauthenticated(req, res);
     return;
   }
 
@@ -122,7 +157,7 @@ export async function requireAuth(
     | null;
 
   if (!body?.authorized || !body.userId) {
-    res.status(401).json({ error: "Unauthorized" });
+    denyUnauthenticated(req, res);
     return;
   }
 

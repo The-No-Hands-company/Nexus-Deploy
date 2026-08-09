@@ -31,6 +31,11 @@ export const config = {
   // See src/middleware/auth.ts.
   nexusAuthUrl: process.env.NEXUS_AUTH_URL ?? "http://localhost:4310",
   nexusAuthTimeoutMs: Number(process.env.NEXUS_AUTH_TIMEOUT_MS ?? 5000),
+  // Where to send a *browser* to sign in. Distinct from nexusAuthUrl, which is
+  // the internal address this server calls: that is typically localhost and is
+  // useless to a user's browser.
+  nexusAuthPublicUrl:
+    process.env.NEXUS_AUTH_PUBLIC_URL ?? process.env.NEXUS_AUTH_URL ?? "http://localhost:4310",
   webhookSecret: process.env.WEBHOOK_SECRET ?? "",
   dockerNetwork: process.env.DOCKER_NETWORK ?? "nexus-net",
   nexusAiUrl: process.env.NEXUS_AI_URL ?? "",
