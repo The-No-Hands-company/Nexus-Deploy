@@ -29,10 +29,16 @@ type ContainerStats = {
 } | null;
 
 // ── API ────────────────────────────────────────────────────────────────────
-const getToken = () => localStorage.getItem("nexus-token") ?? "";
-const authH = () => ({ "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` });
+// No bearer token. Identity arrives as a signed header the ecosystem proxy
+// adds from the session cookie; the browser can neither see it nor forge it,
+// and this app holds no credential of its own.
+const authH = () => ({ "Content-Type": "application/json" });
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { ...init, headers: { ...authH(), ...(init?.headers ?? {}) } });
+  const res = await fetch(path, {
+    ...init,
+    credentials: "include",
+    headers: { ...authH(), ...(init?.headers ?? {}) },
+  });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Request failed");
   return data as T;
@@ -69,34 +75,29 @@ function TriggerPill({ by }: { by: string }) {
   return <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{triggerIcon[by] ?? "·"} {by}</span>;
 }
 
-// ── Login ──────────────────────────────────────────────────────────────────
-function Login({ onAuthed }: { onAuthed: (token: string, user: User) => void }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState(""); const [pw, setPw] = useState("");
-  const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
-  async function submit() {
-    setError(""); setLoading(true);
-    try {
-      const d = await api<{ token: string; user: User }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify({ email, password: pw }) });
-      localStorage.setItem("nexus-token", d.token); onAuthed(d.token, d.user);
-    } catch (e: any) { setError(e.message); } finally { setLoading(false); }
-  }
+// ── Not signed in ──────────────────────────────────────────────────────────
+//
+// There is no login form here any more. Accounts live in Nexus-Auth and the
+// ecosystem proxy authenticates the browser before this app is served, so
+// asking again would be a second login for one account — the thing single
+// sign-on exists to remove. It also asked for an email and password this app
+// could no longer verify.
+const AUTH_LOGIN_URL = "https://auth.tnhc.dev/login";
+
+function NotSignedIn() {
+  const href = `${AUTH_LOGIN_URL}?redirect_uri=${encodeURIComponent(window.location.href)}`;
   return (
     <div className="login-shell">
       <div className="login-card">
         <div className="login-logo">⬡ nexus-deploy</div>
         <h1 className="login-title">Ship anything, free forever.</h1>
         <p className="login-sub">Self-hosted deployment by The No Hands Company. No billing. No lock-in.</p>
-        <div className="login-tabs">
-          <button className={`login-tab ${mode === "login" ? "active" : ""}`} onClick={() => setMode("login")}>Sign in</button>
-          <button className={`login-tab ${mode === "register" ? "active" : ""}`} onClick={() => setMode("register")}>Create account</button>
-        </div>
-        <div className="form-group"><label>Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} /></div>
-        <div className="form-group"><label>Password</label><input type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} /></div>
-        {error && <p className="form-error">{error}</p>}
-        <button className="btn btn-primary" style={{ width: "100%", marginTop: "0.5rem" }} onClick={submit} disabled={loading}>
-          {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
-        </button>
+        <a className="btn btn-primary" style={{ width: "100%", marginTop: "1rem", display: "block", textAlign: "center" }} href={href}>
+          Sign in
+        </a>
+        <p className="login-sub" style={{ marginTop: "0.75rem" }}>
+          One account for every Nexus app.
+        </p>
       </div>
     </div>
   );
@@ -638,9 +639,11 @@ function ProjectsList() {
 
   // SSE for instant status updates
   useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-    const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+    // No token in the query string. EventSource sends cookies on a same-origin
+    // request, so the proxy authenticates this stream exactly like every other
+    // request — and a credential in a URL ends up in logs and history, which is
+    // why it should not have been there even when there was one to send.
+    const es = new EventSource("/api/events", { withCredentials: true });
     es.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
@@ -792,20 +795,26 @@ function AppShell({ token, user, onLogout }: { token: string; user: User; onLogo
 }
 
 export default function App() {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem("nexus-token"));
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    if (!token) { setChecking(false); return; }
-    fetch("/api/me", { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json()).then(d => { setUser(d.user); setChecking(false); })
-      .catch(() => { setToken(null); setChecking(false); });
-  }, [token]);
+    // Anything an older build left behind is a credential nothing accepts now.
+    try { localStorage.removeItem("nexus-token"); } catch { /* private mode */ }
 
-  function logout() { localStorage.removeItem("nexus-token"); setToken(null); setUser(null); }
+    let cancelled = false;
+    fetch("/api/me", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled) { setUser(d?.user ?? null); setChecking(false); } })
+      .catch(() => { if (!cancelled) setChecking(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Signing out is the ecosystem's to do, not this app's: it does not own the
+  // session and cannot clear a cookie it never set.
+  function logout() { window.location.href = "https://auth.tnhc.dev/logout"; }
 
   if (checking) return <div className="loading"><div className="spinner" /> Nexus Deploy</div>;
-  if (!token || !user) return <BrowserRouter><Login onAuthed={(t, u) => { setToken(t); setUser(u); }} /></BrowserRouter>;
-  return <BrowserRouter><AppShell token={token} user={user} onLogout={logout} /></BrowserRouter>;
+  if (!user) return <BrowserRouter><NotSignedIn /></BrowserRouter>;
+  return <BrowserRouter><AppShell token="" user={user} onLogout={logout} /></BrowserRouter>;
 }
