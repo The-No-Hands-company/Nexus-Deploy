@@ -110,6 +110,24 @@ export async function dockerStart(name: string)   { await spawnStream("docker", 
 export async function dockerRestart(name: string) { await spawnStream("docker", ["restart", name], () => {}).catch(() => {}); }
 export async function dockerRemove(name: string)  { await spawnStream("docker", ["rm", "-f", name], () => {}).catch(() => {}); }
 
+// ── Where to reach a container from this process ──────────────────────────
+// On the host network the app listens on the host's loopback; on a bridge
+// network it has its own address on that network, reachable from the host.
+export async function dockerContainerHost(name: string, network: string): Promise<string | null> {
+  if (network === "host") return "127.0.0.1";
+  let out = "";
+  // spawnStream merges stderr into the lines, so only trust output on success.
+  return spawnStream("docker", ["inspect", "-f", `{{with index .NetworkSettings.Networks "${network}"}}{{.IPAddress}}{{end}}`, name], l => { out = l; })
+    .then(() => out.trim() || null, () => null);
+}
+
+/** Last lines of a container's output, for the deployment log when it fails. */
+export async function dockerLogTail(name: string, lines = 20): Promise<string[]> {
+  const out: string[] = [];
+  await spawnStream("docker", ["logs", "--tail", String(lines), name], l => { out.push(l); }).catch(() => {});
+  return out;
+}
+
 // ── docker inspect (status) ────────────────────────────────────────────────
 export async function dockerStatus(name: string): Promise<string> {
   return new Promise(resolve => {

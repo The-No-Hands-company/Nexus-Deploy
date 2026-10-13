@@ -38,6 +38,13 @@ export const config = {
     process.env.NEXUS_AUTH_PUBLIC_URL ?? process.env.NEXUS_AUTH_URL ?? "http://localhost:4310",
   webhookSecret: process.env.WEBHOOK_SECRET ?? "",
   dockerNetwork: process.env.DOCKER_NETWORK ?? "nexus-net",
+  // file: repositories clone off this machine's disk; off unless a test harness
+  // asks for them. See src/lib/repo.ts.
+  allowLocalRepos: (process.env.DEPLOY_ALLOW_LOCAL_REPOS ?? "false") === "true",
+  // How long a new container gets to answer its health probe before the
+  // release is rejected and the previous image is put back.
+  healthTimeoutMs: Number(process.env.DEPLOY_HEALTH_TIMEOUT_MS ?? 60_000),
+  healthIntervalMs: Number(process.env.DEPLOY_HEALTH_INTERVAL_MS ?? 1_000),
   nexusAiUrl: process.env.NEXUS_AI_URL ?? "",
   nexusAiApiKey: process.env.NEXUS_AI_API_KEY ?? "",
   nexusAiCompletionPath: process.env.NEXUS_AI_COMPLETION_PATH ?? "/v1/chat/completions",

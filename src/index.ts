@@ -5,6 +5,8 @@ import crypto from "node:crypto";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { config, ensureDataDir } from "./lib/config.js";
+import { validateBuildContext, validateDockerfile } from "./lib/build-context.js";
+import { resolveRepoUrl } from "./lib/repo.js";
 import { loadDb, saveDb, writeDb } from "./lib/store.js";
 import { newId } from "./lib/auth.js";
 import { createDeployment, runDeploy, runRollback, subscribeToDeployment, isBuilding, cancelBuild } from "./lib/build.js";
@@ -100,6 +102,29 @@ app.get("/api/events", requireAuth, (req: AuthedRequest, res: Response) => {
 });
 
 // ── Projects ───────────────────────────────────────────────────────────────
+// Release-shaping fields are validated here, before anything is persisted, so a
+// project that can never build (or that would clone off this machine's disk)
+// is refused at the door rather than at deploy time. null/"" clears an
+// optional field on update.
+type ReleaseFields = { repo?: string; buildContext?: string; dockerfile?: string | null; healthPath?: string | null };
+function parseReleaseFields(body: Record<string, unknown>): ReleaseFields {
+  const out: ReleaseFields = {};
+  if (body.repo !== undefined) {
+    resolveRepoUrl(String(body.repo), config.allowLocalRepos);
+    out.repo = String(body.repo);
+  }
+  if (body.buildContext !== undefined) out.buildContext = validateBuildContext(body.buildContext);
+  if (body.dockerfile !== undefined) {
+    out.dockerfile = body.dockerfile === null || body.dockerfile === "" ? null : validateDockerfile(body.dockerfile, ".");
+  }
+  if (body.healthPath !== undefined) {
+    if (body.healthPath === null || body.healthPath === "") out.healthPath = null;
+    else if (typeof body.healthPath !== "string" || !/^\/[\x21-\x7e]{0,255}$/.test(body.healthPath)) {
+      throw new Error("healthPath must be an absolute path such as /health");
+    } else out.healthPath = body.healthPath;
+  }
+  return out;
+}
 app.get("/api/projects", requireAuth, (_req, res) => {
   const db = loadDb();
   res.json({ projects: db.projects.map(p => ({ ...p, latestDeployment: db.deployments.find(d => d.projectId === p.id) ?? null })) });
@@ -108,12 +133,18 @@ app.get("/api/projects", requireAuth, (_req, res) => {
 app.post("/api/projects", requireAuth, (_req, res) => {
   const { name, repo, branch, buildCommand, startCommand, volumePath, port } = _req.body ?? {};
   if (!name || !repo) return res.status(400).json({ error: "Missing name or repo" });
+  let fields: ReleaseFields;
+  try { fields = parseReleaseFields({ buildContext: ".", ..._req.body }); }
+  catch (error) { return res.status(400).json({ error: (error as Error).message }); }
   const db = loadDb();
   const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   if (db.projects.some(p => p.name === slug)) return res.status(409).json({ error: "Project name already taken" });
   const project: Project = {
     id: newId("prj"), name: slug, repo: String(repo),
     branch: String(branch ?? "main"),
+    buildContext: fields.buildContext ?? ".",
+    ...(fields.dockerfile ? { dockerfile: fields.dockerfile } : {}),
+    ...(fields.healthPath ? { healthPath: fields.healthPath } : {}),
     buildCommand: String(buildCommand ?? "npm run build"),
     startCommand: String(startCommand ?? "npm start"),
     volumePath: String(volumePath ?? "/workspace"),
@@ -136,13 +167,21 @@ app.get("/api/projects/:id", requireAuth, (req, res) => {
 });
 
 app.put("/api/projects/:id", requireAuth, async (req, res) => {
-  const { repo, branch, buildCommand, startCommand, volumePath, port, customDomain } = req.body ?? {};
+  const { branch, buildCommand, startCommand, volumePath, port, customDomain } = req.body ?? {};
+  let fields: ReleaseFields;
+  try { fields = parseReleaseFields(req.body ?? {}); }
+  catch (error) { return res.status(400).json({ error: (error as Error).message }); }
   // memoryLimit and cpus handled via req.body directly below
   await writeDb(db => {
     const p = db.projects.find(p => p.id === req.params.id);
     if (!p) return;
-    if (repo !== undefined) p.repo = String(repo);
+    if (fields.repo !== undefined) p.repo = fields.repo;
     if (branch !== undefined) p.branch = String(branch);
+    if (fields.buildContext !== undefined) p.buildContext = fields.buildContext;
+    if (fields.dockerfile === null) delete p.dockerfile;
+    else if (fields.dockerfile !== undefined) p.dockerfile = fields.dockerfile;
+    if (fields.healthPath === null) delete p.healthPath;
+    else if (fields.healthPath !== undefined) p.healthPath = fields.healthPath;
     if (buildCommand !== undefined) p.buildCommand = String(buildCommand);
     if (startCommand !== undefined) p.startCommand = String(startCommand);
     if (volumePath !== undefined) p.volumePath = String(volumePath);

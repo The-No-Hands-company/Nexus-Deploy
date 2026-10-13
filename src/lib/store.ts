@@ -31,7 +31,11 @@ export function loadDb(): Database {
   const raw = fs.readFileSync(config.dbPath, "utf8");
   if (!raw.trim()) return structuredClone(emptyDb);
   try {
-    return decryptJson<Database>(config.appSecret, raw);
+    const db = decryptJson<Database>(config.appSecret, raw);
+    for (const project of db.projects) {
+      if (project.buildContext === undefined) project.buildContext = ".";
+    }
+    return db;
   } catch {
     console.error("[store] Failed to decrypt DB — starting fresh");
     return structuredClone(emptyDb);

@@ -15,6 +15,9 @@ export type Project = {
   name: string;
   repo: string;
   branch: string;
+  buildContext: string;
+  dockerfile?: string;      // relative to the repo root; default <buildContext>/Dockerfile
+  healthPath?: string;      // must answer 2xx before a release is live; default: any non-5xx on "/"
   buildCommand: string;
   startCommand: string;
   volumePath: string;

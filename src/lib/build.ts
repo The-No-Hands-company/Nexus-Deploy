@@ -1,12 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawnStream, spawnStreaming, dockerRun } from "./docker.js";
+import { resolveBuildContext, resolveDockerfile, validateDockerfile } from "./build-context.js";
+export { resolveBuildContext } from "./build-context.js";
+import { spawnStream, spawnStreaming, dockerRun, dockerRemove, dockerStatus, dockerContainerHost, dockerLogTail } from "./docker.js";
+import { waitForHealthy, type HealthResult } from "./health.js";
+import { resolveRepoUrl } from "./repo.js";
 import { loadDb, writeDb, trimDeployments, capLogs, saveDb } from "./store.js";
 import { newId } from "./auth.js";
 import { config } from "./config.js";
 import { emitStatusChange } from "./events.js";
 import type { Project, Deployment, DeployTrigger } from "../types.js";
+
+/** A release that started but never became healthy. runContainer has already
+ *  recorded the outcome (and restored the previous image if it could), so the
+ *  callers must not overwrite the statuses it set. */
+class ReleaseRejected extends Error {}
 
 // ── Log subscriber registry ────────────────────────────────────────────────
 type Subscriber = (line: string) => void;
@@ -143,7 +152,7 @@ export async function runDeploy(project: Project, deploymentId: string): Promise
     // 1. Clone
     log(`[nexus] Cloning ${project.repo} @ ${project.branch}…`);
     fs.mkdirSync(buildDir, { recursive: true });
-    const repoUrl = project.repo.startsWith("http") ? project.repo : `https://github.com/${project.repo}`;
+    const repoUrl = resolveRepoUrl(project.repo, config.allowLocalRepos);
 
     await new Promise<void>((resolve, reject) => {
       const kill = spawnStreaming("git", ["clone", "--depth", "1", "--branch", project.branch, repoUrl, buildDir], log,
@@ -155,12 +164,13 @@ export async function runDeploy(project: Project, deploymentId: string): Promise
 
     // 2. Build image
     const imageTag = `nexus/${project.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}:${deploymentId.slice(-8)}`;
-    const hasDockerfile = fs.existsSync(path.join(buildDir, "Dockerfile"));
-    log(`[nexus] Building with ${hasDockerfile ? "Docker" : "Nixpacks"} → ${imageTag}`);
+    const contextDir = resolveBuildContext(buildDir, project.buildContext);
+    const dockerfile = resolveDockerfile(buildDir, validateDockerfile(project.dockerfile, project.buildContext ?? "."));
+    log(`[nexus] Building with ${dockerfile ? "Docker" : "Nixpacks"} → ${imageTag}`);
 
     await new Promise<void>((resolve, reject) => {
-      const cmd = hasDockerfile ? "docker" : "nixpacks";
-      const args = hasDockerfile ? ["build", "-t", imageTag, buildDir] : ["build", buildDir, "--name", imageTag];
+      const cmd = dockerfile ? "docker" : "nixpacks";
+      const args = dockerfile ? ["build", "-t", imageTag, "-f", dockerfile, contextDir] : ["build", contextDir, "--name", imageTag];
       const kill = spawnStreaming(cmd, args, log,
         err => { if (cancelled) resolve(); else if (err) reject(err); else resolve(); });
       killFns.push(kill);
@@ -172,7 +182,9 @@ export async function runDeploy(project: Project, deploymentId: string): Promise
     await runContainer(project, deploymentId, imageTag, log);
 
   } catch (err: any) {
-    if (cancelled || err?.message === "cancelled") {
+    if (err instanceof ReleaseRejected) {
+      await pushLog(deploymentId, `[nexus] ✗ Release rejected: ${err.message}`);
+    } else if (cancelled || err?.message === "cancelled") {
       await pushLog(deploymentId, `[nexus] ✗ Build cancelled`);
       await setDepStatus(deploymentId, "cancelled");
       await setProjStatus(project.id, "failed");
@@ -204,8 +216,10 @@ export async function runRollback(project: Project, deploymentId: string, imageT
     await runContainer(project, deploymentId, imageTag, log);
   } catch (err: any) {
     await pushLog(deploymentId, `[nexus] ✗ Rollback failed: ${err?.message}`);
-    await setDepStatus(deploymentId, "failed");
-    await setProjStatus(project.id, "failed");
+    if (!(err instanceof ReleaseRejected)) {
+      await setDepStatus(deploymentId, "failed");
+      await setProjStatus(project.id, "failed");
+    }
   } finally {
     buildingProjects.delete(project.id);
     const dep = loadDb().deployments.find(d => d.id === deploymentId);
@@ -213,22 +227,63 @@ export async function runRollback(project: Project, deploymentId: string, imageT
   }
 }
 
-// ── Shared: start container ────────────────────────────────────────────────
-async function runContainer(project: Project, deploymentId: string, imageTag: string, log: (l: string) => void) {
-  const env: Record<string, string> = { PORT: String(project.port ?? 3000), NODE_ENV: "production", ...project.env };
+// ── Shared: start container, then prove it serves ──────────────────────────
+// "live" is a claim that the app answers, so it is only recorded after the
+// health probe passes. A release that never becomes healthy is rejected and
+// the image that was live before it is started again, so a bad release costs
+// a short outage instead of leaving the app down. (The old container is
+// replaced in place; zero-downtime blue/green would need a second port.)
+async function runContainer(snapshot: Project, deploymentId: string, imageTag: string, log: (l: string) => void) {
+  const project = loadDb().projects.find(p => p.id === snapshot.id) ?? snapshot;
+  // imageTag on the project is only ever written when a release passed its probe.
+  const previousImage = project.imageTag && project.imageTag !== imageTag ? project.imageTag : undefined;
   const domain = project.customDomain ?? `${project.name}.${config.baseDomain}`;
-  const containerName = `nexus-app-${project.name}`;
 
+  log(`[nexus] Starting container → https://${domain}`);
+  const containerId = await startContainer(project, imageTag, domain, log);
+  const health = await checkHealth(project, log);
+  if (health.ok) {
+    log(`[nexus] ✅ Live at https://${domain}`);
+    await setDepStatus(deploymentId, "live");
+    await setProjStatus(project.id, "live", { containerId, domain, imageTag });
+    return;
+  }
+
+  log(`[nexus] ✗ Health check failed: ${health.reason}`);
+  for (const line of await dockerLogTail(containerName(project))) log(`[app] ${line}`);
+  await setDepStatus(deploymentId, "failed");
+
+  if (previousImage) {
+    log(`[nexus] Restoring previous release → ${previousImage}`);
+    const restoredId = await startContainer(project, previousImage, domain, log);
+    const restored = await checkHealth(project, log);
+    if (restored.ok) {
+      log(`[nexus] ✓ Previous release is serving again`);
+      await setProjStatus(project.id, "live", { containerId: restoredId, domain, imageTag: previousImage });
+      throw new ReleaseRejected(health.reason);
+    }
+    log(`[nexus] ✗ Previous release is unhealthy too: ${restored.reason}`);
+  }
+  // Nothing healthy to serve: stop the crash loop rather than leave it restarting.
+  await dockerRemove(containerName(project));
+  await setProjStatus(project.id, "failed");
+  throw new ReleaseRejected(health.reason);
+}
+
+function containerName(project: Project) {
+  return `nexus-app-${project.name}`;
+}
+
+function startContainer(project: Project, imageTag: string, domain: string, log: (l: string) => void) {
+  const env: Record<string, string> = { PORT: String(project.port ?? 3000), NODE_ENV: "production", ...project.env };
   // Named volume for persistence across redeploys
   const volumes: string[] = [];
   if (project.volumePath && project.volumePath !== "/workspace") {
     volumes.push(`nexus-vol-${project.name}:${project.volumePath}`);
   }
-
-  log(`[nexus] Starting container → https://${domain}`);
-  const containerId = await dockerRun({
+  return dockerRun({
     image: imageTag,
-    name: containerName,
+    name: containerName(project),
     env,
     domain,
     port: project.port ?? 3000,
@@ -238,8 +293,27 @@ async function runContainer(project: Project, deploymentId: string, imageTag: st
     memoryLimit: project.memoryLimit || undefined,
     cpus: project.cpus || undefined,
   });
-  log(`[nexus] ✅ Live at https://${domain}`);
+}
 
-  await setDepStatus(deploymentId, "live");
-  await setProjStatus(project.id, "live", { containerId, domain, imageTag });
+async function checkHealth(project: Project, log: (l: string) => void): Promise<HealthResult> {
+  const name = containerName(project);
+  const healthPath = project.healthPath || "/";
+  log(`[nexus] Waiting for ${healthPath} to answer (up to ${Math.round(config.healthTimeoutMs / 1000)}s)…`);
+  return waitForHealthy({
+    requireOk: Boolean(project.healthPath),
+    timeoutMs: config.healthTimeoutMs,
+    intervalMs: config.healthIntervalMs,
+    // A crash-looping container under --restart flips through "restarting".
+    isRunning: async () => ["running", "created"].includes(await dockerStatus(name)),
+    probe: async () => {
+      const host = await dockerContainerHost(name, config.dockerNetwork);
+      if (!host) return null;
+      const response = await fetch(`http://${host}:${project.port ?? 3000}${healthPath}`, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(2_000),
+      });
+      await response.body?.cancel();
+      return response.status;
+    },
+  });
 }
