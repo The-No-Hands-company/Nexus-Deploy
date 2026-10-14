@@ -1,5 +1,5 @@
 # ── Stage 1: Build React dashboard ────────────────────────────────────────
-FROM node:22-alpine AS web-build
+FROM node:24-alpine AS web-build
 WORKDIR /app/web
 COPY web/package*.json ./
 RUN npm install
@@ -7,7 +7,7 @@ COPY web/ ./
 RUN npm run build
 
 # ── Stage 2: Build TypeScript server ──────────────────────────────────────
-FROM node:22-alpine AS server-build
+FROM node:24-alpine AS server-build
 WORKDIR /app
 COPY package*.json tsconfig.json ./
 RUN npm install
@@ -16,7 +16,7 @@ COPY routes/ ./routes/
 RUN npm run build:server
 
 # ── Stage 3: Production image ──────────────────────────────────────────────
-FROM node:22-alpine
+FROM node:24-alpine
 WORKDIR /app
 
 # Install docker CLI + git + nixpacks for the build engine
