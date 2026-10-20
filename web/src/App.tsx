@@ -623,7 +623,7 @@ function ActivityFeed() {
 }
 
 // ── Projects list ──────────────────────────────────────────────────────────
-function ProjectsList() {
+function ProjectsList({ onCountsChange }: { onCountsChange?: (c: { total: number; live: number; building: number }) => void }) {
   const nav = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [showNew, setShowNew] = useState(false);
@@ -633,7 +633,12 @@ function ProjectsList() {
   const load = useCallback(async () => {
     const d = await api<{ projects: Project[] }>("/api/projects");
     setProjects(d.projects); setLoading(false);
-  }, []);
+    onCountsChange?.({
+      total: d.projects.length,
+      live: d.projects.filter(p => p.status === "live").length,
+      building: d.projects.filter(p => p.status === "building").length,
+    });
+  }, [onCountsChange]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -648,7 +653,11 @@ function ProjectsList() {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === "status")
-          setProjects(ps => ps.map(p => p.id === msg.projectId ? { ...p, status: msg.status } : p));
+          setProjects(ps => {
+            const updated = ps.map(p => p.id === msg.projectId ? { ...p, status: msg.status } : p);
+            onCountsChange?.({ total: updated.length, live: updated.filter(p => p.status === "live").length, building: updated.filter(p => p.status === "building").length });
+            return updated;
+          });
       } catch {}
     };
     es.onerror = () => es.close();
@@ -690,10 +699,43 @@ function ProjectsList() {
 
       {loading && <div className="empty" style={{ padding: "3rem" }}><div className="spinner" /></div>}
       {!loading && projects.length === 0 && (
-        <div className="empty">
-          <div className="empty-icon">⬡</div>
-          <p>No projects yet. Create one and ship something.</p>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowNew(true)}>+ New project</button>
+        <div className="onboard-card">
+          <div className="onboard-hero">
+            <div className="onboard-icon">▲</div>
+            <h2 className="onboard-title">Deploy your first project</h2>
+            <p className="onboard-sub">Connect a GitHub repo and go live in under a minute. Auto-HTTPS, rollbacks, live log streaming — all included.</p>
+            <button className="btn btn-primary" onClick={() => setShowNew(true)}>+ New project</button>
+          </div>
+          <div className="onboard-steps">
+            <div className="onboard-step">
+              <div className="step-num">1</div>
+              <div>
+                <div className="step-title">Connect your repo</div>
+                <div className="step-desc">Paste a GitHub URL and choose your branch. Any public or private repo works.</div>
+              </div>
+            </div>
+            <div className="onboard-step">
+              <div className="step-num">2</div>
+              <div>
+                <div className="step-title">Set build &amp; start commands</div>
+                <div className="step-desc">nixpacks detects your stack automatically. Override if you need to.</div>
+              </div>
+            </div>
+            <div className="onboard-step">
+              <div className="step-num">3</div>
+              <div>
+                <div className="step-title">Push — it deploys</div>
+                <div className="step-desc">Every push to your branch triggers a new build. Watch it live in the log terminal.</div>
+              </div>
+            </div>
+            <div className="onboard-step">
+              <div className="step-num">4</div>
+              <div>
+                <div className="step-title">Your app goes live with HTTPS</div>
+                <div className="step-desc">Gets a <code>*.tnhc.dev</code> domain instantly. Bring your own domain via CNAME.</div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
       {!loading && search && filtered.length === 0 && (
@@ -702,20 +744,31 @@ function ProjectsList() {
 
       <div className="projects-grid">
         {filtered.map(p => (
-          <div key={p.id} className="project-card" onClick={() => nav(`/projects/${p.id}`)}>
+          <div key={p.id} className={`project-card project-card-${p.status}`} onClick={() => nav(`/projects/${p.id}`)}>
             <div className="project-card-top">
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="project-name">{p.name}</div>
-                <div className="project-repo">{p.repo} · {p.branch}</div>
+                <div className="project-repo-row">
+                  <span className="project-repo">{p.repo.replace(/^https?:\/\/github\.com\//, "")}</span>
+                  <span className="branch-pill">⎇ {p.branch}</span>
+                </div>
               </div>
               <Badge status={p.status} />
             </div>
-            {(p.customDomain ?? p.domain) && <div className="project-domain">https://{p.customDomain ?? p.domain}</div>}
-            <div className="project-card-meta">
-              <span>{p.latestDeployment ? `${timeAgo(p.latestDeployment.createdAt)} · ${p.latestDeployment.triggeredBy}` : "No deploys yet"}</span>
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                {!p.autoDeployEnabled && <span style={{ fontSize: "0.68rem", color: "var(--muted)", border: "1px solid var(--border2)", borderRadius: 4, padding: "1px 5px" }}>manual</span>}
-                <span>:{p.port}</span>
+            {(p.customDomain ?? p.domain) && (
+              <div className="project-domain">
+                <span className="domain-icon">↗</span>
+                https://{p.customDomain ?? p.domain}
+              </div>
+            )}
+            <div className="project-card-footer">
+              <span className="project-meta-time">
+                {p.latestDeployment
+                  ? <>{triggerIcon[p.latestDeployment.triggeredBy] ?? "·"} {timeAgo(p.latestDeployment.createdAt)}</>
+                  : <span style={{ fontStyle: "italic" }}>No deploys yet</span>}
+              </span>
+              <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+                {!p.autoDeployEnabled && <span className="pill-manual">manual</span>}
               </div>
             </div>
           </div>
@@ -727,48 +780,60 @@ function ProjectsList() {
   );
 }
 
-// ── Network Health ─────────────────────────────────────────────────────────
-const NETWORK_API = (import.meta as any).env?.VITE_NEXUS_NETWORK_API
-  ?? "https://network.nexus.computer/api/stats";
-
-function NetworkHealth() {
-  const [stats, setStats] = React.useState<{ nodes_online: number; total_ram_gb: number; countries: number; compute_jobs_hour: number } | null>(null);
-  useEffect(() => {
-    const load = () => fetch(NETWORK_API).then(r => r.json()).then(setStats).catch(() => {});
-    load(); const t = setInterval(load, 30_000); return () => clearInterval(t);
-  }, []);
-  if (!stats) return null;
-  const ramTb = stats.total_ram_gb >= 1024 ? (stats.total_ram_gb / 1024).toFixed(1) + " TB" : Math.round(stats.total_ram_gb) + " GB";
-  return (
-    <div style={{ margin: "0.75rem 0", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border2)", background: "rgba(255,255,255,0.02)", fontSize: "0.75rem" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 7 }}>
-        <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--live)", display: "inline-block" }} />
-        <span style={{ color: "var(--live)", fontWeight: 600, letterSpacing: "0.02em" }}>Nexus Network</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 8px", color: "var(--muted)" }}>
-        <span>Nodes <span style={{ color: "var(--text)" }}>{stats.nodes_online.toLocaleString()}</span></span>
-        <span>RAM <span style={{ color: "var(--text)" }}>{ramTb}</span></span>
-        <span>Compute <span style={{ color: "var(--warn)" }}>{stats.compute_jobs_hour.toLocaleString()}</span></span>
-        <span>Countries <span style={{ color: "var(--text)" }}>{stats.countries}</span></span>
-      </div>
-    </div>
-  );
-}
-
 // ── Sidebar ────────────────────────────────────────────────────────────────
-function Sidebar({ user, onLogout }: { user: User; onLogout: () => void }) {
+function Sidebar({ user, onLogout, counts }: { user: User; onLogout: () => void; counts: { total: number; live: number; building: number } }) {
   const nav = useNavigate();
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <div className="wordmark">⬡ nexus-deploy</div>
-        <div className="sub">The No Hands Company</div>
+        <div className="sidebar-brand">
+          <div className="brand-icon">▲</div>
+          <div>
+            <div className="wordmark">Deploy</div>
+            <div className="sub">by Nexus · The No Hands Company</div>
+          </div>
+        </div>
       </div>
+
       <nav className="sidebar-nav">
-        <button className="nav-link active" onClick={() => nav("/")}><span className="icon">⬡</span> Projects</button>
-        <button className="nav-link" onClick={() => window.open("https://github.com/The-No-Hands-company/Nexus-Deploy", "_blank")}><span className="icon">↗</span> GitHub</button>
+        <button className="nav-link active" onClick={() => nav("/")}>
+          <span className="icon">⬡</span> Projects
+          {counts.total > 0 && <span className="nav-count">{counts.total}</span>}
+        </button>
       </nav>
-      <NetworkHealth />
+
+      {counts.total > 0 && (
+        <div className="sidebar-stats">
+          {counts.live > 0 && (
+            <div className="sidebar-stat">
+              <span className="stat-dot live" />
+              <span>{counts.live} live</span>
+            </div>
+          )}
+          {counts.building > 0 && (
+            <div className="sidebar-stat">
+              <span className="stat-dot building" />
+              <span>{counts.building} building</span>
+            </div>
+          )}
+          {counts.live === 0 && counts.building === 0 && (
+            <div className="sidebar-stat">
+              <span className="stat-dot idle" />
+              <span>all stopped</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="sidebar-help">
+        <div className="help-title">How auto-deploy works</div>
+        <ol className="help-steps">
+          <li>Push to your GitHub branch</li>
+          <li>Nexus clones &amp; builds with nixpacks</li>
+          <li>Container goes live with HTTPS</li>
+        </ol>
+      </div>
+
       <div className="sidebar-user">
         <div className="role-badge">{user.role}</div>
         <div className="email">{user.email}</div>
@@ -780,12 +845,13 @@ function Sidebar({ user, onLogout }: { user: User; onLogout: () => void }) {
 
 // ── App ────────────────────────────────────────────────────────────────────
 function AppShell({ token, user, onLogout }: { token: string; user: User; onLogout: () => void }) {
+  const [counts, setCounts] = useState({ total: 0, live: 0, building: 0 });
   return (
     <div className="shell">
-      <Sidebar user={user} onLogout={onLogout} />
+      <Sidebar user={user} onLogout={onLogout} counts={counts} />
       <main className="main">
         <Routes>
-          <Route path="/" element={<ProjectsList />} />
+          <Route path="/" element={<ProjectsList onCountsChange={setCounts} />} />
           <Route path="/projects/:id" element={<ProjectDetail token={token} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
