@@ -115,7 +115,12 @@ export function publicProject(project: Project): PublicProject {
   const source = sourceOf(project);
   const shown: PublicSource =
     source.type === "git"
-      ? { type: "git", repo: source.repo, branch: source.branch, hasToken: Boolean((source as GitSource).token) }
+      ? {
+          type: "git",
+          repo: source.repo,
+          branch: source.branch,
+          hasToken: Boolean((source as GitSource).token),
+        }
       : source;
   return { ...project, source: shown };
 }

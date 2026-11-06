@@ -11,7 +11,11 @@ export type NexusIdentity = {
   [key: string]: unknown;
 };
 
-export type AuthedRequest = Request & { userId?: string; user?: NexusIdentity; access?: GrantedAccess };
+export type AuthedRequest = Request & {
+  userId?: string;
+  user?: NexusIdentity;
+  access?: GrantedAccess;
+};
 
 /** What asking the identity service about a credential can come to. */
 export type AuthResult =
@@ -66,9 +70,11 @@ export const authenticateWithNexusAuth: Authenticator = async (token) => {
   }
   if (response.status >= 500) return { kind: "unavailable" };
   if (!response.ok) return { kind: "denied" };
-  const body = (await response.json().catch(() => null)) as
-    | { authorized?: boolean; userId?: string; user?: NexusIdentity }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    authorized?: boolean;
+    userId?: string;
+    user?: NexusIdentity;
+  } | null;
   if (!body?.authorized || !body.userId) return { kind: "denied" };
   return { kind: "ok", identity: { ...(body.user ?? {}), id: body.userId } };
 };

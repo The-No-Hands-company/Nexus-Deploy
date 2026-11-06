@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { containerNameOf } from "../src/lib/containers.js";
-import { evaluateBuildGuard, type GuardContext } from "../src/lib/guard.js";
+import { type GuardContext, evaluateBuildGuard } from "../src/lib/guard.js";
 import { DEFAULT_LIMITS } from "../src/lib/safeguards.js";
 
 const now = 50_000_000;
-const calm: GuardContext = { isBuilding: () => false, hostFreePercent: 60, sandboxUsedPercent: 10, now };
+const calm: GuardContext = {
+  isBuilding: () => false,
+  hostFreePercent: 60,
+  sandboxUsedPercent: 10,
+  now,
+};
 const data = {
   projects: [
     { id: "a1", ownerId: "ada" },
@@ -37,9 +42,24 @@ test("builds in the last hour across all of a member's projects are rate limited
     triggeredBy: "manual",
     createdAt: now - 1_000 * (i + 1),
   }));
-  const verdict = evaluateBuildGuard({ ...data, deployments: recent }, { ownerId: "ada" }, calm, DEFAULT_LIMITS);
+  const verdict = evaluateBuildGuard(
+    { ...data, deployments: recent },
+    { ownerId: "ada" },
+    calm,
+    DEFAULT_LIMITS,
+  );
   assert.equal(code(verdict), "rate");
-  assert.equal(code(evaluateBuildGuard({ ...data, deployments: recent }, { ownerId: "bob" }, calm, DEFAULT_LIMITS)), "ok");
+  assert.equal(
+    code(
+      evaluateBuildGuard(
+        { ...data, deployments: recent },
+        { ownerId: "bob" },
+        calm,
+        DEFAULT_LIMITS,
+      ),
+    ),
+    "ok",
+  );
 });
 
 test("a low disk pauses everyone's builds", () => {
@@ -53,6 +73,9 @@ test("a project with no owner is not grouped with other ownerless projects", () 
 });
 
 test("the serving container is named per release, with the old fixed name as a fallback", () => {
-  assert.equal(containerNameOf({ name: "demo", containerName: "nexus-app-demo-abcd1234" }), "nexus-app-demo-abcd1234");
+  assert.equal(
+    containerNameOf({ name: "demo", containerName: "nexus-app-demo-abcd1234" }),
+    "nexus-app-demo-abcd1234",
+  );
   assert.equal(containerNameOf({ name: "demo" }), "nexus-app-demo");
 });

@@ -31,7 +31,12 @@ function ipv4ToInt(host: string): number | null {
 
 export function isPrivateHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  ) {
     return true;
   }
   const v4 = ipv4ToInt(host);
@@ -39,13 +44,20 @@ export function isPrivateHost(hostname: string): boolean {
   if (host.includes(":")) {
     // IPv6 literal: loopback, unspecified, unique-local (fc00::/7), link-local (fe80::/10),
     // and IPv4-mapped addresses, which could smuggle a private IPv4.
-    return host === "::1" || host === "::" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:");
+    return (
+      host === "::1" ||
+      host === "::" ||
+      /^f[cd]/.test(host) ||
+      /^fe[89ab]/.test(host) ||
+      host.startsWith("::ffff:")
+    );
   }
   return false;
 }
 
 export function validateNotifyUrl(value: unknown): string {
-  if (typeof value !== "string" || value.length > 2048) throw new Error("notifyUrl must be an https URL");
+  if (typeof value !== "string" || value.length > 2048)
+    throw new Error("notifyUrl must be an https URL");
   let url: URL;
   try {
     url = new URL(value);
@@ -55,6 +67,7 @@ export function validateNotifyUrl(value: unknown): string {
   if (url.protocol !== "https:" || url.username || url.password) {
     throw new Error("notifyUrl must be an https URL without credentials");
   }
-  if (isPrivateHost(url.hostname)) throw new Error("notifyUrl must not point at a private or local address");
+  if (isPrivateHost(url.hostname))
+    throw new Error("notifyUrl must not point at a private or local address");
   return url.toString();
 }

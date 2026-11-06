@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
 import type { Router } from "express";
+import { recordAudit } from "../lib/audit.js";
 import { newId } from "../lib/auth.js";
 import { validateEnv } from "../lib/env.js";
 import { canAccessProject } from "../lib/members.js";
 import { checkSlug, slugify } from "../lib/names.js";
 import { applyPatch, parseNewProject, parsePatch } from "../lib/project-input.js";
-import { recordAudit } from "../lib/audit.js";
 import { checkProjectQuota } from "../lib/safeguards.js";
 import { publicProject } from "../lib/source.js";
 import { loadDb, writeDb } from "../lib/store.js";
@@ -49,7 +49,10 @@ export function projectRoutes(router: Router, ctx: RouteContext): void {
       takenLocally: (s) => loadDb().projects.some((p) => p.name === s),
       takenElsewhere: deps.takenElsewhere,
     });
-    if (!name.ok) return void res.status(REASON_STATUS[name.reason]).json({ error: name.message, code: name.reason });
+    if (!name.ok)
+      return void res
+        .status(REASON_STATUS[name.reason])
+        .json({ error: name.message, code: name.reason });
 
     const now = deps.now();
     const project: Project = {
@@ -82,9 +85,14 @@ export function projectRoutes(router: Router, ctx: RouteContext): void {
         return;
       }
       db.projects.unshift(project);
-      recordAudit(db.audit, { actor: access.memberId, action: "project.create", subject: project.id }, now);
+      recordAudit(
+        db.audit,
+        { actor: access.memberId, action: "project.create", subject: project.id },
+        now,
+      );
     });
-    if (taken) return void res.status(409).json({ error: `"${slug}" is already taken.`, code: "taken" });
+    if (taken)
+      return void res.status(409).json({ error: `"${slug}" is already taken.`, code: "taken" });
     res.status(201).json({ project: publicProject(project) });
   });
 

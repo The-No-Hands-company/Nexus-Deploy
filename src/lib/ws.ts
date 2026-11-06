@@ -43,7 +43,11 @@ export function attachSockets(server: Server, deps: AppDeps): void {
   server.on("upgrade", (req, socket, head) => {
     const { pathname } = new URL(req.url ?? "", "http://localhost");
     const target =
-      pathname === "/api/log-stream" ? buildLogs : pathname === "/api/container-stream" ? containerLogs : null;
+      pathname === "/api/log-stream"
+        ? buildLogs
+        : pathname === "/api/container-stream"
+          ? containerLogs
+          : null;
     if (!target) {
       socket.destroy();
       return;
@@ -62,7 +66,8 @@ export function attachSockets(server: Server, deps: AppDeps): void {
     const dep = loadDb().deployments.find((d) => d.id === deploymentId);
     const project = dep && loadDb().projects.find((p) => p.id === dep.projectId);
     // Someone else's build answers exactly like one that does not exist.
-    if (!dep || !project || !canAccessProject(project, access)) return void socket.close(1008, "Not found");
+    if (!dep || !project || !canAccessProject(project, access))
+      return void socket.close(1008, "Not found");
 
     for (const line of dep.logs) socket.send(JSON.stringify({ type: "log", line }));
     if (dep.status === "live" || dep.status === "failed" || dep.status === "cancelled") {
@@ -74,7 +79,10 @@ export function attachSockets(server: Server, deps: AppDeps): void {
       if (socket.readyState !== socket.OPEN) return;
       socket.send(JSON.stringify({ type: "log", line }));
       const current = loadDb().deployments.find((d) => d.id === deploymentId);
-      if (current && (current.status === "live" || current.status === "failed" || current.status === "cancelled")) {
+      if (
+        current &&
+        (current.status === "live" || current.status === "failed" || current.status === "cancelled")
+      ) {
         socket.send(JSON.stringify({ type: "done", status: current.status }));
         socket.close();
       }
@@ -103,7 +111,8 @@ export function attachSockets(server: Server, deps: AppDeps): void {
     const stopLogs = deps.ops.logs(
       name,
       (line) => {
-        if (!closed && socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "log", line }));
+        if (!closed && socket.readyState === socket.OPEN)
+          socket.send(JSON.stringify({ type: "log", line }));
       },
       (err) => {
         if (!closed && socket.readyState === socket.OPEN) {

@@ -115,7 +115,11 @@ test("a Git deployment clones, builds, starts, publishes the route and goes live
 });
 
 test("an image deployment pulls, pins the exact digest, and neither clones nor builds", async () => {
-  const p = project({ repo: "nginx:1.27", branch: "", source: { type: "image", image: "nginx:1.27" } });
+  const p = project({
+    repo: "nginx:1.27",
+    branch: "",
+    source: { type: "image", image: "nginx:1.27" },
+  });
   seed(p);
   const { deps, calls } = makeDeps();
   const dep = build.createDeployment(p, "manual", "manual");
@@ -134,7 +138,9 @@ test("a failed clone fails the deployment, and a token in the error never reache
   const { deps } = makeDeps({
     steps: {
       clone: async () => {
-        throw new Error(`fatal: could not read from https://x-access-token:${token}@example.test/o/r`);
+        throw new Error(
+          `fatal: could not read from https://x-access-token:${token}@example.test/o/r`,
+        );
       },
       buildImage: async () => {},
       pullImage: async () => DIGEST,
@@ -218,7 +224,11 @@ test("a successful release records the image it replaced, so rollback survives p
   await build.runDeploy(p, dep.id, deps);
   assert.equal(projectOf().previousImageTag, "nexus/demo:old");
   assert.equal(projectOf().imageTag, `nexus/demo:${dep.id.slice(-8)}`);
-  assert.equal(runtime.isAlive("nexus-app-demo-oldoldol"), false, "the old release stopped after the route moved");
+  assert.equal(
+    runtime.isAlive("nexus-app-demo-oldoldol"),
+    false,
+    "the old release stopped after the route moved",
+  );
 });
 
 test("cancelling a running build stops it and marks it cancelled", async () => {
@@ -252,7 +262,8 @@ test("a build that outlives its time limit is stopped and reported", async () =>
   const { deps } = makeDeps({
     limits: { ...DEFAULT_LIMITS, buildTimeoutMs: 40 },
     steps: {
-      clone: (_source, _dir, _log, track) => new Promise((_resolve, reject) => track(() => reject(new Error("killed")))),
+      clone: (_source, _dir, _log, track) =>
+        new Promise((_resolve, reject) => track(() => reject(new Error("killed")))),
       buildImage: async () => {},
       pullImage: async () => DIGEST,
     },
@@ -286,14 +297,21 @@ test("a second build of the same project is refused while one is running", async
   const second = build.createDeployment(p, "two", "manual");
   await build.runDeploy(p, second.id, deps);
   assert.equal(deploymentOf(second.id)?.status, "failed");
-  assert.ok(deploymentOf(second.id)?.logs.some((l) => l.includes("Another build is already running")));
+  assert.ok(
+    deploymentOf(second.id)?.logs.some((l) => l.includes("Another build is already running")),
+  );
 
   await build.cancelBuild(first.id);
   await running;
 });
 
 test("a rollback starts the recorded image without cloning or building", async () => {
-  const p = project({ status: "live", containerName: "nexus-app-demo-oldoldol", hostPort: 20005, imageTag: "nexus/demo:new" });
+  const p = project({
+    status: "live",
+    containerName: "nexus-app-demo-oldoldol",
+    hostPort: 20005,
+    imageTag: "nexus/demo:new",
+  });
   seed(p);
   const { deps, calls, runtime } = makeDeps();
   runtime.seed("nexus-app-demo-oldoldol");
@@ -316,7 +334,10 @@ test("two projects releasing at once never pick the same port", async () => {
   const depA = build.createDeployment(a, "x", "manual");
   const depB = build.createDeployment(b, "y", "manual");
 
-  await Promise.all([build.runDeploy(a, depA.id, first.deps), build.runDeploy(b, depB.id, second.deps)]);
+  await Promise.all([
+    build.runDeploy(a, depA.id, first.deps),
+    build.runDeploy(b, depB.id, second.deps),
+  ]);
 
   const portA = projectOf("prj_a").hostPort;
   const portB = projectOf("prj_b").hostPort;
@@ -325,7 +346,9 @@ test("two projects releasing at once never pick the same port", async () => {
 });
 
 test("the queued deployment's first log lines never show a token", () => {
-  const p = project({ source: { type: "git", repo: "o/r", branch: "main", token: "ghp_visible123" } });
+  const p = project({
+    source: { type: "git", repo: "o/r", branch: "main", token: "ghp_visible123" },
+  });
   seed(p);
   const dep = build.createDeployment(p, "abc", "manual");
   assert.ok(!dep.logs.join("\n").includes("ghp_visible123"));

@@ -28,7 +28,10 @@ test("founders and admins are operators; nobody else is", () => {
 });
 
 test("an account nobody let in is refused", () => {
-  assert.deepEqual(resolveAccess([], { id: "u1", role: "user" }), { ok: false, reason: "not_a_member" });
+  assert.deepEqual(resolveAccess([], { id: "u1", role: "user" }), {
+    ok: false,
+    reason: "not_a_member",
+  });
 });
 
 test("a granted member is let in, without operator rights", () => {
@@ -40,13 +43,23 @@ test("a granted member is let in, without operator rights", () => {
 });
 
 test("operators are let in without being on the list", () => {
-  assert.deepEqual(resolveAccess([], { id: "boss", role: "admin" }), { ok: true, operator: true, memberId: "boss" });
+  assert.deepEqual(resolveAccess([], { id: "boss", role: "admin" }), {
+    ok: true,
+    operator: true,
+    memberId: "boss",
+  });
 });
 
 test("suspension shuts an account out, even an operator's", () => {
   const members = [member("u1", { status: "suspended" }), member("op", { status: "suspended" })];
-  assert.deepEqual(resolveAccess(members, { id: "u1", role: "user" }), { ok: false, reason: "suspended" });
-  assert.deepEqual(resolveAccess(members, { id: "op", role: "admin" }), { ok: false, reason: "suspended" });
+  assert.deepEqual(resolveAccess(members, { id: "u1", role: "user" }), {
+    ok: false,
+    reason: "suspended",
+  });
+  assert.deepEqual(resolveAccess(members, { id: "op", role: "admin" }), {
+    ok: false,
+    reason: "suspended",
+  });
 });
 
 test("the first founder becomes the owner, once", () => {
@@ -90,7 +103,12 @@ test("projects from before ownership are adopted by the owner, not by whoever as
 
 test("granting twice does not duplicate, and re-activates a suspended member", () => {
   const members = [member("u1", { status: "suspended" })];
-  const again = grantMember(members, { id: "boss", role: "admin" }, { authUserId: "u1", label: "Ada" }, 9);
+  const again = grantMember(
+    members,
+    { id: "boss", role: "admin" },
+    { authUserId: "u1", label: "Ada" },
+    9,
+  );
   assert.equal(members.length, 1);
   assert.equal(again.status, "active");
   assert.equal(again.label, "Ada");

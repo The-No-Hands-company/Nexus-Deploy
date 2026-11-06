@@ -12,12 +12,18 @@ after(async () => {
 });
 
 const SECRET = "whsec_test_secret";
-const sign = (body: string, secret = SECRET) => `sha256=${crypto.createHmac("sha256", secret).update(body).digest("hex")}`;
+const sign = (body: string, secret = SECRET) =>
+  `sha256=${crypto.createHmac("sha256", secret).update(body).digest("hex")}`;
 const push = (project: { id: string }, body: object, headers: Record<string, string> = {}) => {
   const raw = JSON.stringify(body);
   return h.call("POST", `/api/webhooks/github/${project.id}`, {
     rawBody: raw,
-    headers: { "Content-Type": "application/json", "X-GitHub-Event": "push", "X-Hub-Signature-256": sign(raw), ...headers },
+    headers: {
+      "Content-Type": "application/json",
+      "X-GitHub-Event": "push",
+      "X-Hub-Signature-256": sign(raw),
+      ...headers,
+    },
   });
 };
 
@@ -33,7 +39,10 @@ test("a correctly signed push to the tracked branch starts a build", async () =>
   const r = await push(p, { ref: "refs/heads/main", after: "deadbeefcafe" });
   assert.equal(r.status, 200);
   assert.ok(r.body.deploymentId);
-  assert.deepEqual(h.pipeline.deploys.map((d) => d.projectId), [p.id]);
+  assert.deepEqual(
+    h.pipeline.deploys.map((d) => d.projectId),
+    [p.id],
+  );
   assert.equal(store.loadDb().deployments[0]?.triggeredBy, "webhook");
   assert.equal(store.loadDb().deployments[0]?.commitSha, "deadbeefcafe");
 });
@@ -52,7 +61,13 @@ test("a request with no signature is refused, however it is dressed up", async (
 test("a wrong, truncated or differently-keyed signature is refused", async () => {
   const p = addProject({});
   const raw = JSON.stringify({ ref: "refs/heads/main" });
-  for (const bad of [sign(raw, "another-secret"), sign(raw).slice(0, -4), "sha256=", "nonsense", sign("different body")]) {
+  for (const bad of [
+    sign(raw, "another-secret"),
+    sign(raw).slice(0, -4),
+    "sha256=",
+    "nonsense",
+    sign("different body"),
+  ]) {
     const r = await push(p, { ref: "refs/heads/main" }, { "X-Hub-Signature-256": bad });
     assert.equal(r.status, 401, bad);
   }
@@ -108,7 +123,13 @@ test("a push counts against the safeguards, so a push loop cannot bypass them", 
 test("a suspended member's projects stop building on push", async () => {
   const p = addProject({ ownerId: "ada" });
   const db = store.loadDb();
-  db.members.push({ authUserId: "ada", role: "member", status: "suspended", grantedBy: "boss", grantedAt: 1 });
+  db.members.push({
+    authUserId: "ada",
+    role: "member",
+    status: "suspended",
+    grantedBy: "boss",
+    grantedAt: 1,
+  });
   store.saveDb(db);
   const r = await push(p, { ref: "refs/heads/main" });
   assert.equal(r.body.skipped, "owner suspended");
@@ -125,7 +146,11 @@ test("a signed body that is not JSON is a 400", async () => {
   const raw = "this is not json";
   const r = await h.call("POST", `/api/webhooks/github/${p.id}`, {
     rawBody: raw,
-    headers: { "X-GitHub-Event": "push", "X-Hub-Signature-256": sign(raw), "Content-Type": "application/json" },
+    headers: {
+      "X-GitHub-Event": "push",
+      "X-Hub-Signature-256": sign(raw),
+      "Content-Type": "application/json",
+    },
   });
   assert.equal(r.status, 400);
 });

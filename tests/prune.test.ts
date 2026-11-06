@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { imagesToPrune, keepRefs } from "../src/lib/prune.js";
 
-const img = (repository: string, tag: string, digest = "<none>", id = "id0000000000") => ({ repository, tag, digest, id });
+const img = (repository: string, tag: string, digest = "<none>", id = "id0000000000") => ({
+  repository,
+  tag,
+  digest,
+  id,
+});
 
 test("the running image, the rollback image and the few most recent deployments are kept", () => {
   const keep = keepRefs({
@@ -15,17 +20,26 @@ test("the running image, the rollback image and the few most recent deployments 
       { projectId: "p", imageTag: "", createdAt: 5 },
     ],
   });
-  assert.deepEqual([...keep].sort(), ["nexus/a:cur", "nexus/a:d2", "nexus/a:d3", "nexus/a:d4", "nexus/a:prev"]);
+  assert.deepEqual([...keep].sort(), [
+    "nexus/a:cur",
+    "nexus/a:d2",
+    "nexus/a:d3",
+    "nexus/a:d4",
+    "nexus/a:prev",
+  ]);
 });
 
 test("another project's deployments do not keep this one's images alive, nor the reverse", () => {
-  const keep = keepRefs({
-    projects: [{ id: "a" }, { id: "b" }],
-    deployments: [
-      { projectId: "a", imageTag: "nexus/a:1", createdAt: 1 },
-      { projectId: "b", imageTag: "nexus/b:1", createdAt: 2 },
-    ],
-  }, 1);
+  const keep = keepRefs(
+    {
+      projects: [{ id: "a" }, { id: "b" }],
+      deployments: [
+        { projectId: "a", imageTag: "nexus/a:1", createdAt: 1 },
+        { projectId: "b", imageTag: "nexus/b:1", createdAt: 2 },
+      ],
+    },
+    1,
+  );
   assert.deepEqual([...keep].sort(), ["nexus/a:1", "nexus/b:1"]);
 });
 
@@ -41,7 +55,9 @@ test("a pulled image recorded by digest is kept even though it is listed by tag"
 });
 
 test("untagged images are pruned by id", () => {
-  assert.deepEqual(imagesToPrune([img("<none>", "<none>", "<none>", "abc123def456")], new Set()), ["abc123def456"]);
+  assert.deepEqual(imagesToPrune([img("<none>", "<none>", "<none>", "abc123def456")], new Set()), [
+    "abc123def456",
+  ]);
 });
 
 test("an empty node prunes nothing", () => {

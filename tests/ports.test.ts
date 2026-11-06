@@ -16,12 +16,21 @@ test("ports already in use are skipped, wrapping around the end of the range", a
 
 test("ports the operating system says are taken are skipped too", async () => {
   const busy = new Set([20000, 20001]);
-  assert.equal(await allocatePort({ min: 20000, max: 20003 }, new Set(), async (p) => !busy.has(p), 0), 20002);
+  assert.equal(
+    await allocatePort({ min: 20000, max: 20003 }, new Set(), async (p) => !busy.has(p), 0),
+    20002,
+  );
 });
 
 test("when the whole range is taken there is no port", async () => {
-  assert.equal(await allocatePort({ min: 20000, max: 20002 }, new Set([20000, 20001, 20002]), yes, 0), null);
-  assert.equal(await allocatePort({ min: 20000, max: 20002 }, new Set(), async () => false, 0), null);
+  assert.equal(
+    await allocatePort({ min: 20000, max: 20002 }, new Set([20000, 20001, 20002]), yes, 0),
+    null,
+  );
+  assert.equal(
+    await allocatePort({ min: 20000, max: 20002 }, new Set(), async () => false, 0),
+    null,
+  );
 });
 
 test("a single-port range works", async () => {
@@ -29,7 +38,12 @@ test("a single-port range works", async () => {
 });
 
 test("ports held by projects, current or reserved, are all counted", () => {
-  const used = portsInUse([{ hostPort: 20001 }, { pendingPort: 20002 }, { hostPort: 20003, pendingPort: 20004 }, {}]);
+  const used = portsInUse([
+    { hostPort: 20001 },
+    { pendingPort: 20002 },
+    { hostPort: 20003, pendingPort: 20004 },
+    {},
+  ]);
   assert.deepEqual([...used].sort(), [20001, 20002, 20003, 20004]);
 });
 

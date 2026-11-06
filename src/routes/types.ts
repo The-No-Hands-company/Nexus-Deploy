@@ -3,7 +3,7 @@ import type { ContainerStats } from "../lib/docker.js";
 import type { RoutePublisher } from "../lib/publisher.js";
 import type { Limits, Verdict } from "../lib/safeguards.js";
 import type { Authenticator } from "../middleware/auth.js";
-import type { Deployment, DeployTrigger, Project } from "../types.js";
+import type { DeployTrigger, Deployment, Project } from "../types.js";
 
 /** Starting, stopping and cancelling builds. Injected so the routes are tested without Docker or Git. */
 export type Pipeline = {

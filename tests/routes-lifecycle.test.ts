@@ -27,16 +27,29 @@ beforeEach(async () => {
 
 test("deploy starts a build for the owner, records who did it, and returns the deployment", async () => {
   const p = addProject({ ownerId: "ada" });
-  const r = await h.call("POST", `/api/projects/${p.id}/deploy`, { token: "t-ada", body: { commitSha: "feedface" } });
+  const r = await h.call("POST", `/api/projects/${p.id}/deploy`, {
+    token: "t-ada",
+    body: { commitSha: "feedface" },
+  });
   assert.equal(r.status, 200);
   assert.equal(r.body.deployment.commitSha, "feedface");
-  assert.deepEqual(h.pipeline.deploys.map((d) => d.projectId), [p.id]);
-  assert.ok(store.loadDb().audit.some((e) => e.action === "deploy.start" && e.actor === "ada" && e.subject === p.id));
+  assert.deepEqual(
+    h.pipeline.deploys.map((d) => d.projectId),
+    [p.id],
+  );
+  assert.ok(
+    store
+      .loadDb()
+      .audit.some((e) => e.action === "deploy.start" && e.actor === "ada" && e.subject === p.id),
+  );
 });
 
 test("a commit label that is not plain text is replaced, so it cannot reach logs or webhooks", async () => {
   const p = addProject({ ownerId: "ada" });
-  const r = await h.call("POST", `/api/projects/${p.id}/deploy`, { token: "t-ada", body: { commitSha: "x; rm -rf /" } });
+  const r = await h.call("POST", `/api/projects/${p.id}/deploy`, {
+    token: "t-ada",
+    body: { commitSha: "x; rm -rf /" },
+  });
   assert.equal(r.body.deployment.commitSha, "manual");
 });
 
@@ -50,7 +63,10 @@ test("someone else's project cannot be deployed, and nothing starts", async () =
 test("a build already running is a 409, and each safeguard refusal has its own status", async () => {
   const p = addProject({ ownerId: "ada" });
   h.pipeline.building.add(p.id);
-  assert.equal((await h.call("POST", `/api/projects/${p.id}/deploy`, { token: "t-ada" })).status, 409);
+  assert.equal(
+    (await h.call("POST", `/api/projects/${p.id}/deploy`, { token: "t-ada" })).status,
+    409,
+  );
   h.pipeline.building.clear();
 
   const cases = [
@@ -71,23 +87,42 @@ test("a build already running is a 409, and each safeguard refusal has its own s
 
 test("rollback re-runs the recorded image as a new deployment", async () => {
   const p = addProject({ ownerId: "ada", status: "live", containerName: "nexus-app-demo-new" });
-  const old = addDeployment({ projectId: p.id, imageTag: "nexus/demo:old", commitSha: "0123456789abcdef" });
+  const old = addDeployment({
+    projectId: p.id,
+    imageTag: "nexus/demo:old",
+    commitSha: "0123456789abcdef",
+  });
   const r = await h.call("POST", `/api/deployments/${old.id}/rollback`, { token: "t-ada" });
   assert.equal(r.status, 200);
-  assert.deepEqual(h.pipeline.rollbacks.map((x) => x.imageRef), ["nexus/demo:old"]);
+  assert.deepEqual(
+    h.pipeline.rollbacks.map((x) => x.imageRef),
+    ["nexus/demo:old"],
+  );
   assert.equal(r.body.deployment.triggeredBy, "rollback");
-  assert.equal(store.loadDb().deployments.find((d) => d.id === r.body.deployment.id)?.imageTag, "nexus/demo:old");
+  assert.equal(
+    store.loadDb().deployments.find((d) => d.id === r.body.deployment.id)?.imageTag,
+    "nexus/demo:old",
+  );
 });
 
 test("rollback refuses a deployment with no image, a busy project, and another member's", async () => {
   const p = addProject({ ownerId: "ada" });
   const noImage = addDeployment({ projectId: p.id, imageTag: "" });
-  assert.equal((await h.call("POST", `/api/deployments/${noImage.id}/rollback`, { token: "t-ada" })).status, 400);
+  assert.equal(
+    (await h.call("POST", `/api/deployments/${noImage.id}/rollback`, { token: "t-ada" })).status,
+    400,
+  );
   const withImage = addDeployment({ projectId: p.id, imageTag: "nexus/demo:old" });
   h.pipeline.building.add(p.id);
-  assert.equal((await h.call("POST", `/api/deployments/${withImage.id}/rollback`, { token: "t-ada" })).status, 409);
+  assert.equal(
+    (await h.call("POST", `/api/deployments/${withImage.id}/rollback`, { token: "t-ada" })).status,
+    409,
+  );
   h.pipeline.building.clear();
-  assert.equal((await h.call("POST", `/api/deployments/${withImage.id}/rollback`, { token: "t-bob" })).status, 404);
+  assert.equal(
+    (await h.call("POST", `/api/deployments/${withImage.id}/rollback`, { token: "t-bob" })).status,
+    404,
+  );
   assert.equal(h.pipeline.rollbacks.length, 0);
 });
 
@@ -98,8 +133,14 @@ test("cancel stops a running build; one that is not running cannot be cancelled"
   const ok = await h.call("POST", `/api/deployments/${running.id}/cancel`, { token: "t-ada" });
   assert.deepEqual(ok.body, { ok: true, cancelled: true });
   assert.deepEqual(h.pipeline.cancelled, [running.id]);
-  assert.equal((await h.call("POST", `/api/deployments/${done.id}/cancel`, { token: "t-ada" })).status, 400);
-  assert.equal((await h.call("POST", `/api/deployments/${running.id}/cancel`, { token: "t-bob" })).status, 404);
+  assert.equal(
+    (await h.call("POST", `/api/deployments/${done.id}/cancel`, { token: "t-ada" })).status,
+    400,
+  );
+  assert.equal(
+    (await h.call("POST", `/api/deployments/${running.id}/cancel`, { token: "t-bob" })).status,
+    404,
+  );
 });
 
 test("if the build can no longer be killed, cancel still marks it cancelled", async () => {
@@ -113,21 +154,37 @@ test("if the build can no longer be killed, cancel still marks it cancelled", as
 });
 
 test("stop, start and restart act on the container serving now, falling back to the old fixed name", async () => {
-  const modern = addProject({ ownerId: "ada", name: "modern", containerName: "nexus-app-modern-ab12cd34", status: "live" });
+  const modern = addProject({
+    ownerId: "ada",
+    name: "modern",
+    containerName: "nexus-app-modern-ab12cd34",
+    status: "live",
+  });
   const legacy = addProject({ ownerId: "ada", name: "legacy", containerId: "abc", status: "live" });
   await h.call("POST", `/api/projects/${modern.id}/stop`, { token: "t-ada" });
   await h.call("POST", `/api/projects/${legacy.id}/restart`, { token: "t-ada" });
   await h.call("POST", `/api/projects/${modern.id}/start`, { token: "t-ada" });
-  assert.deepEqual(h.ops.calls, ["stop:nexus-app-modern-ab12cd34", "restart:nexus-app-legacy", "start:nexus-app-modern-ab12cd34"]);
+  assert.deepEqual(h.ops.calls, [
+    "stop:nexus-app-modern-ab12cd34",
+    "restart:nexus-app-legacy",
+    "start:nexus-app-modern-ab12cd34",
+  ]);
   assert.equal(store.loadDb().projects.find((p) => p.id === modern.id)?.status, "live");
 });
 
 test("restart with nothing to restart is a 400, and other members' containers are untouchable", async () => {
   const never = addProject({ ownerId: "ada" });
-  assert.equal((await h.call("POST", `/api/projects/${never.id}/restart`, { token: "t-ada" })).status, 400);
+  assert.equal(
+    (await h.call("POST", `/api/projects/${never.id}/restart`, { token: "t-ada" })).status,
+    400,
+  );
   const bobs = addProject({ ownerId: "bob", containerName: "nexus-app-bobs-x" });
   for (const action of ["stop", "start", "restart"]) {
-    assert.equal((await h.call("POST", `/api/projects/${bobs.id}/${action}`, { token: "t-ada" })).status, 404, action);
+    assert.equal(
+      (await h.call("POST", `/api/projects/${bobs.id}/${action}`, { token: "t-ada" })).status,
+      404,
+      action,
+    );
   }
   assert.deepEqual(h.ops.calls, []);
 });
@@ -144,25 +201,51 @@ test("health reports the container's state and corrects a project that says live
 test("stats only for a live project, and only for its owner", async () => {
   const live = addProject({ ownerId: "ada", status: "live", containerName: "nexus-app-demo-x" });
   const idle = addProject({ ownerId: "ada", name: "idle", status: "stopped" });
-  assert.equal((await h.call("GET", `/api/projects/${live.id}/stats`, { token: "t-ada" })).body.stats.cpu, "1%");
-  assert.equal((await h.call("GET", `/api/projects/${idle.id}/stats`, { token: "t-ada" })).body.stats, null);
-  assert.equal((await h.call("GET", `/api/projects/${live.id}/stats`, { token: "t-bob" })).status, 404);
+  assert.equal(
+    (await h.call("GET", `/api/projects/${live.id}/stats`, { token: "t-ada" })).body.stats.cpu,
+    "1%",
+  );
+  assert.equal(
+    (await h.call("GET", `/api/projects/${idle.id}/stats`, { token: "t-ada" })).body.stats,
+    null,
+  );
+  assert.equal(
+    (await h.call("GET", `/api/projects/${live.id}/stats`, { token: "t-bob" })).status,
+    404,
+  );
 });
 
 test("a build's log is readable by its owner, deletable by its owner, and nobody else", async () => {
   const p = addProject({ ownerId: "ada" });
   const dep = addDeployment({ projectId: p.id, logs: ["line one", "line two"], status: "live" });
-  assert.deepEqual((await h.call("GET", `/api/deployments/${dep.id}/logs`, { token: "t-ada" })).body.logs, ["line one", "line two"]);
-  assert.equal((await h.call("GET", `/api/deployments/${dep.id}/logs`, { token: "t-bob" })).status, 404);
-  assert.equal((await h.call("DELETE", `/api/deployments/${dep.id}/logs`, { token: "t-bob" })).status, 404);
-  assert.equal((await h.call("DELETE", `/api/deployments/${dep.id}/logs`, { token: "t-ada" })).status, 200);
-  assert.deepEqual(store.loadDb().deployments.find((d) => d.id === dep.id)?.logs, ["[nexus] Log deleted by its owner"]);
+  assert.deepEqual(
+    (await h.call("GET", `/api/deployments/${dep.id}/logs`, { token: "t-ada" })).body.logs,
+    ["line one", "line two"],
+  );
+  assert.equal(
+    (await h.call("GET", `/api/deployments/${dep.id}/logs`, { token: "t-bob" })).status,
+    404,
+  );
+  assert.equal(
+    (await h.call("DELETE", `/api/deployments/${dep.id}/logs`, { token: "t-bob" })).status,
+    404,
+  );
+  assert.equal(
+    (await h.call("DELETE", `/api/deployments/${dep.id}/logs`, { token: "t-ada" })).status,
+    200,
+  );
+  assert.deepEqual(store.loadDb().deployments.find((d) => d.id === dep.id)?.logs, [
+    "[nexus] Log deleted by its owner",
+  ]);
 });
 
 test("a build in progress cannot have its log deleted", async () => {
   const p = addProject({ ownerId: "ada" });
   const dep = addDeployment({ projectId: p.id, status: "building" });
-  assert.equal((await h.call("DELETE", `/api/deployments/${dep.id}/logs`, { token: "t-ada" })).status, 409);
+  assert.equal(
+    (await h.call("DELETE", `/api/deployments/${dep.id}/logs`, { token: "t-ada" })).status,
+    409,
+  );
 });
 
 test("activity shows only the caller's own deployments, operators' everything", async () => {
@@ -171,7 +254,10 @@ test("activity shows only the caller's own deployments, operators' everything", 
   addDeployment({ projectId: mine.id });
   addDeployment({ projectId: theirs.id });
   const ada = (await h.call("GET", "/api/activity", { token: "t-ada" })).body.activity;
-  assert.deepEqual(ada.map((a: { projectName: string }) => a.projectName), ["mine"]);
+  assert.deepEqual(
+    ada.map((a: { projectName: string }) => a.projectName),
+    ["mine"],
+  );
   const boss = (await h.call("GET", "/api/activity", { token: "t-boss" })).body.activity;
   assert.equal(boss.length, 2);
 });
@@ -218,7 +304,10 @@ test("an export has everything needed to recreate a project, and no credentials"
   assert.equal(r.body.project.port, 8080);
   const text = JSON.stringify(r.body);
   assert.ok(!text.includes("ghp_exportsecret1") && !text.includes("whsec_secret_value"));
-  assert.equal((await h.call("GET", `/api/projects/${p.id}/export`, { token: "t-bob" })).status, 404);
+  assert.equal(
+    (await h.call("GET", `/api/projects/${p.id}/export`, { token: "t-bob" })).status,
+    404,
+  );
 });
 
 test("deleting a project removes its containers, route, volume, images, records and name", async () => {
@@ -244,7 +333,10 @@ test("deleting a project removes its containers, route, volume, images, records 
     "removeImage:nexus/doomed:ab12cd34",
   ]);
   const containersFirst = h.ops.calls.findIndex((c) => c.startsWith("removeImage:"));
-  assert.ok(h.ops.calls.findIndex((c) => c.startsWith("remove:")) < containersFirst, "containers go before their images");
+  assert.ok(
+    h.ops.calls.findIndex((c) => c.startsWith("remove:")) < containersFirst,
+    "containers go before their images",
+  );
   assert.deepEqual(h.publisher.unpublished, ["doomed"]);
   const db = store.loadDb();
   assert.equal(db.projects.length, 0);

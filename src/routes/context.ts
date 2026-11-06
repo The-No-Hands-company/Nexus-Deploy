@@ -1,6 +1,12 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { type AuditAction, recordAudit } from "../lib/audit.js";
-import { adoptOrphanProjects, bootstrapOwner, canAccessProject, type GrantedAccess, resolveAccess } from "../lib/members.js";
+import {
+  type GrantedAccess,
+  adoptOrphanProjects,
+  bootstrapOwner,
+  canAccessProject,
+  resolveAccess,
+} from "../lib/members.js";
 import { loadDb, writeDb } from "../lib/store.js";
 import { type AuthedRequest, makeRequireAuth } from "../middleware/auth.js";
 import type { Project } from "../types.js";
@@ -46,7 +52,11 @@ export function makeContext(deps: AppDeps): RouteContext {
         const owner = bootstrapOwner(db.members, identity, deps.now());
         if (owner) {
           adoptOrphanProjects(db.projects, owner.authUserId);
-          recordAudit(db.audit, { actor: owner.authUserId, action: "member.grant", subject: owner.authUserId }, deps.now());
+          recordAudit(
+            db.audit,
+            { actor: owner.authUserId, action: "member.grant", subject: owner.authUserId },
+            deps.now(),
+          );
         }
       });
     }
@@ -85,6 +95,10 @@ export async function audit(
 ): Promise<void> {
   const actor = (req as AuthedRequest).userId ?? "unknown";
   await writeDb((db) => {
-    recordAudit(db.audit, { actor, action, ...(subject !== undefined ? { subject } : {}) }, deps.now());
+    recordAudit(
+      db.audit,
+      { actor, action, ...(subject !== undefined ? { subject } : {}) },
+      deps.now(),
+    );
   });
 }

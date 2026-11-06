@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkSlug, slugify, SLUG_RE, type NameDeps } from "../src/lib/names.js";
+import { type NameDeps, SLUG_RE, checkSlug, slugify } from "../src/lib/names.js";
 
 const free: NameDeps = { takenLocally: () => false, takenElsewhere: async () => false };
 
@@ -13,7 +13,19 @@ test("slugify makes a hostname-shaped name out of free text", () => {
 
 test("well-formed slugs pass the format rule and malformed ones do not", () => {
   for (const ok of ["abc", "my-app", "a1b", "web-2-api"]) assert.ok(SLUG_RE.test(ok), ok);
-  for (const bad of ["", "ab", "1abc", "-abc", "abc-", "a--b", "Abc", "a_b", "a.b", "xn--abc", "a".repeat(41)]) {
+  for (const bad of [
+    "",
+    "ab",
+    "1abc",
+    "-abc",
+    "abc-",
+    "a--b",
+    "Abc",
+    "a_b",
+    "a.b",
+    "xn--abc",
+    "a".repeat(41),
+  ]) {
     assert.ok(!SLUG_RE.test(bad), bad);
   }
 });
@@ -54,7 +66,13 @@ test("if the registry cannot be asked, the name is refused rather than given out
 
 test("the outside registries are not consulted for a name that is already refused", async () => {
   let asked = 0;
-  const deps: NameDeps = { takenLocally: () => false, takenElsewhere: async () => { asked++; return false; } };
+  const deps: NameDeps = {
+    takenLocally: () => false,
+    takenElsewhere: async () => {
+      asked++;
+      return false;
+    },
+  };
   await checkSlug("Bad Name", deps);
   await checkSlug("deploy", deps);
   assert.equal(asked, 0);

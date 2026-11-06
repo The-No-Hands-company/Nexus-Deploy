@@ -14,7 +14,11 @@ export const KEEP_RECENT_DEPLOYMENTS = 3;
 
 export function keepRefs(
   data: {
-    projects: ReadonlyArray<{ id: string; imageTag?: string | undefined; previousImageTag?: string | undefined }>;
+    projects: ReadonlyArray<{
+      id: string;
+      imageTag?: string | undefined;
+      previousImageTag?: string | undefined;
+    }>;
     deployments: ReadonlyArray<{ projectId: string; imageTag: string; createdAt: number }>;
   },
   recent: number = KEEP_RECENT_DEPLOYMENTS,
@@ -23,11 +27,11 @@ export function keepRefs(
   for (const project of data.projects) {
     if (project.imageTag) keep.add(project.imageTag);
     if (project.previousImageTag) keep.add(project.previousImageTag);
-    data.deployments
+    const recentDeployments = data.deployments
       .filter((d) => d.projectId === project.id && d.imageTag)
       .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, recent)
-      .forEach((d) => keep.add(d.imageTag));
+      .slice(0, recent);
+    for (const deployment of recentDeployments) keep.add(deployment.imageTag);
   }
   return keep;
 }

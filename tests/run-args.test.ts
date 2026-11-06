@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildRunArgs, validateVolumePath, type RunSpec } from "../src/lib/run-args.js";
+import { type RunSpec, buildRunArgs, validateVolumePath } from "../src/lib/run-args.js";
 
 const spec: RunSpec = {
   name: "nexus-app-demo-1a2b3c4d",
@@ -11,8 +11,12 @@ const spec: RunSpec = {
   limits: { memory: "512m", cpus: "0.5", pids: 256 },
 };
 
-const pairs = (args: string[]) => args.flatMap((a, i) => (a.startsWith("-") ? [[a, args[i + 1] ?? ""]] : []));
-const valuesOf = (args: string[], flag: string) => pairs(args).filter(([f]) => f === flag).map(([, v]) => v);
+const pairs = (args: string[]) =>
+  args.flatMap((a, i) => (a.startsWith("-") ? [[a, args[i + 1] ?? ""]] : []));
+const valuesOf = (args: string[], flag: string) =>
+  pairs(args)
+    .filter(([f]) => f === flag)
+    .map(([, v]) => v);
 
 test("the container drops every capability and cannot gain any", () => {
   const args = buildRunArgs(spec);
@@ -60,14 +64,29 @@ test("a project volume is a named volume at an absolute path, nothing else", () 
 });
 
 test("volume and container names that could smuggle options are refused", () => {
-  for (const bad of ["", "relative", "/a:/b", "/a/../etc", "/a b", "/a,b", "/a;b", "/x".repeat(150)]) {
+  for (const bad of [
+    "",
+    "relative",
+    "/a:/b",
+    "/a/../etc",
+    "/a b",
+    "/a,b",
+    "/a;b",
+    "/x".repeat(150),
+  ]) {
     assert.throws(() => validateVolumePath(bad), /volumePath/, bad);
   }
   assert.equal(validateVolumePath("/data/app-1"), "/data/app-1");
   assert.throws(() => buildRunArgs({ ...spec, name: "bad name" }), /container name/);
   assert.throws(() => buildRunArgs({ ...spec, name: "--rm" }), /container name/);
-  assert.throws(() => buildRunArgs({ ...spec, volume: { name: "../x", path: "/data" } }), /volume name/);
-  assert.throws(() => buildRunArgs({ ...spec, volume: { name: "v", path: "/a:/b" } }), /volumePath/);
+  assert.throws(
+    () => buildRunArgs({ ...spec, volume: { name: "../x", path: "/data" } }),
+    /volume name/,
+  );
+  assert.throws(
+    () => buildRunArgs({ ...spec, volume: { name: "v", path: "/a:/b" } }),
+    /volumePath/,
+  );
 });
 
 test("images are marked as managed, and the image is the last argument", () => {

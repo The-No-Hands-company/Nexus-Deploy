@@ -6,9 +6,15 @@ import { cleanCommit } from "./lifecycle.js";
 import type { RouteContext } from "./types.js";
 
 /** `sha256=<hex>` of the exact bytes received, compared without leaking timing. */
-export function signatureMatches(secret: string, body: Buffer, header: string | undefined): boolean {
+export function signatureMatches(
+  secret: string,
+  body: Buffer,
+  header: string | undefined,
+): boolean {
   if (!header) return false;
-  const expected = Buffer.from(`sha256=${crypto.createHmac("sha256", secret).update(body).digest("hex")}`);
+  const expected = Buffer.from(
+    `sha256=${crypto.createHmac("sha256", secret).update(body).digest("hex")}`,
+  );
   const given = Buffer.from(header);
   return given.length === expected.length && crypto.timingSafeEqual(given, expected);
 }
@@ -39,7 +45,8 @@ export function webhookRoutes(app: Express, ctx: RouteContext): void {
 
       const event = req.get("x-github-event");
       if (event === "ping") return void res.json({ ok: true, pong: true });
-      if (event !== undefined && event !== "push") return void res.json({ ok: true, skipped: `event ${event}` });
+      if (event !== undefined && event !== "push")
+        return void res.json({ ok: true, skipped: `event ${event}` });
 
       let payload: { ref?: unknown; after?: unknown };
       try {
@@ -52,16 +59,20 @@ export function webhookRoutes(app: Express, ctx: RouteContext): void {
       if (source.type !== "git") {
         return void res.status(400).json({ error: "Image projects do not use push webhooks" });
       }
-      const branch = typeof payload.ref === "string" ? payload.ref.replace("refs/heads/", "") : undefined;
+      const branch =
+        typeof payload.ref === "string" ? payload.ref.replace("refs/heads/", "") : undefined;
       if (branch && branch !== source.branch) {
         return void res.json({ ok: true, skipped: `branch ${branch} ≠ ${source.branch}` });
       }
-      if (!project.autoDeployEnabled) return void res.json({ ok: true, skipped: "auto-deploy disabled" });
-      if (deps.pipeline.isBuilding(project.id)) return void res.json({ ok: true, skipped: "build in progress" });
+      if (!project.autoDeployEnabled)
+        return void res.json({ ok: true, skipped: "auto-deploy disabled" });
+      if (deps.pipeline.isBuilding(project.id))
+        return void res.json({ ok: true, skipped: "build in progress" });
 
       // A suspended member's projects stop building on push too.
       const owner = loadDb().members.find((m) => m.authUserId === project.ownerId);
-      if (owner?.status === "suspended") return void res.json({ ok: true, skipped: "owner suspended" });
+      if (owner?.status === "suspended")
+        return void res.json({ ok: true, skipped: "owner suspended" });
 
       // Pushes count against the same safeguards as a manual deploy, or a push loop would bypass them.
       const verdict = deps.pipeline.guardBuild(project);

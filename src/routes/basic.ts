@@ -12,7 +12,12 @@ export function basicRoutes(router: Router, ctx: RouteContext): void {
   const { deps } = ctx;
 
   router.get("/api/health", (_req, res) => {
-    res.json({ ok: true, name: "nexus-deploy", version: deps.version, time: new Date(deps.now()).toISOString() });
+    res.json({
+      ok: true,
+      name: "nexus-deploy",
+      version: deps.version,
+      time: new Date(deps.now()).toISOString(),
+    });
   });
 
   // Who am I, and am I let in? Answered even for an account that is not a member,
@@ -23,7 +28,9 @@ export function basicRoutes(router: Router, ctx: RouteContext): void {
     const access = resolveAccess(loadDb().members, identity);
     res.json({
       user: identity,
-      access: access.ok ? { member: true, operator: access.operator } : { member: false, reason: access.reason },
+      access: access.ok
+        ? { member: true, operator: access.operator }
+        : { member: false, reason: access.reason },
     });
   });
 
@@ -74,8 +81,14 @@ export function basicRoutes(router: Router, ctx: RouteContext): void {
       result = setMemberStatus(db.members, authUserId, status as MemberStatus);
     });
     if (result === "not_found") return void res.status(404).json({ error: "Not found" });
-    if (result === "is_owner") return void res.status(409).json({ error: "An owner cannot be suspended" });
-    await audit(deps, req, status === "suspended" ? "member.suspend" : "member.reactivate", authUserId);
+    if (result === "is_owner")
+      return void res.status(409).json({ error: "An owner cannot be suspended" });
+    await audit(
+      deps,
+      req,
+      status === "suspended" ? "member.suspend" : "member.reactivate",
+      authUserId,
+    );
     res.json({ ok: true });
   });
 

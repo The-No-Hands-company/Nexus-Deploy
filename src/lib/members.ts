@@ -48,7 +48,10 @@ export function bootstrapOwner(members: Member[], identity: Identity, now: numbe
   return owner;
 }
 
-export function canAccessProject(project: Pick<Project, "ownerId">, access: GrantedAccess): boolean {
+export function canAccessProject(
+  project: Pick<Project, "ownerId">,
+  access: GrantedAccess,
+): boolean {
   return access.operator || (project.ownerId !== undefined && project.ownerId === access.memberId);
 }
 

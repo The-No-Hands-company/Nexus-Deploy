@@ -2,7 +2,7 @@
  * The question "may this project build right now?", answered from the database
  * and a few measurements passed in, so it needs no disk, clock or Docker to test.
  */
-import { checkBuildAllowed, countRecentBuilds, type Limits, type Verdict } from "./safeguards.js";
+import { type Limits, type Verdict, checkBuildAllowed, countRecentBuilds } from "./safeguards.js";
 
 export type GuardData = {
   projects: ReadonlyArray<{ id: string; ownerId?: string | undefined }>;

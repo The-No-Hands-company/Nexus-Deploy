@@ -6,9 +6,8 @@ import { test } from "node:test";
 // node --test runs each file in its own process, so this cannot leak into other
 // tests. The config is read when the module loads, hence the dynamic imports.
 process.env["SANDBOX_DOCKER_HOST"] = "";
-const { childEnv, parseImageList, parseRepoDigest, SandboxNotConfigured, spawnStream } = await import(
-  "../src/lib/docker.js"
-);
+const { childEnv, parseImageList, parseRepoDigest, SandboxNotConfigured, spawnStream } =
+  await import("../src/lib/docker.js");
 const { probeLoopback } = await import("../src/lib/health.js");
 
 const SANDBOX = "unix:///run/user/1001/docker.sock";
@@ -30,7 +29,10 @@ test("docker and the builder are pointed at the sandbox, overriding anything amb
 });
 
 test("with no sandbox configured, docker and the builder refuse to run at all", () => {
-  assert.throws(() => childEnv("docker", "", { DOCKER_HOST: "unix:///var/run/docker.sock" }), SandboxNotConfigured);
+  assert.throws(
+    () => childEnv("docker", "", { DOCKER_HOST: "unix:///var/run/docker.sock" }),
+    SandboxNotConfigured,
+  );
   assert.throws(() => childEnv("nixpacks", ""), /Refusing to use the host's Docker daemon/);
 });
 
@@ -41,7 +43,10 @@ test("other commands are untouched, so git needs no sandbox", () => {
 
 test("a docker command fails closed through the real spawn path when no sandbox is set", async () => {
   // The test environment sets no SANDBOX_DOCKER_HOST, which is exactly the misconfiguration.
-  await assert.rejects(spawnStream("docker", ["version"], () => {}), SandboxNotConfigured);
+  await assert.rejects(
+    spawnStream("docker", ["version"], () => {}),
+    SandboxNotConfigured,
+  );
 });
 
 test("a command that outlives its timeout is killed and reported", async () => {
@@ -53,7 +58,9 @@ test("a command that outlives its timeout is killed and reported", async () => {
 
 test("spawnStream passes extra environment to the child and streams its output", async () => {
   const lines: string[] = [];
-  await spawnStream("sh", ["-c", 'echo "$NEXUS_T"'], (l) => lines.push(l), undefined, { env: { NEXUS_T: "hello" } });
+  await spawnStream("sh", ["-c", 'echo "$NEXUS_T"'], (l) => lines.push(l), undefined, {
+    env: { NEXUS_T: "hello" },
+  });
   assert.deepEqual(lines, ["hello"]);
 });
 

@@ -1,21 +1,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { DeployTrigger, Deployment, GitSource, Project } from "../types.js";
 import { newId } from "./auth.js";
 import { resolveBuildContext, resolveDockerfile, validateDockerfile } from "./build-context.js";
-import { buildImage, cloneRepo, pullImage, type BuildOptions, type Track } from "./build-steps.js";
+import { type BuildOptions, type Track, buildImage, cloneRepo, pullImage } from "./build-steps.js";
 import { config } from "./config.js";
 import { dockerReleaseRuntime } from "./docker-runtime.js";
 import { emitStatusChange } from "./events.js";
 import { evaluateBuildGuard } from "./guard.js";
-import { appHost, type PortRange } from "./hosts.js";
+import { type PortRange, appHost } from "./hosts.js";
 import { allocatePort, loopbackPortFree, portsInUse } from "./ports.js";
 import { NullPublisher, type RoutePublisher } from "./publisher.js";
-import { performRelease, type ReleaseProject, type ReleaseRuntime } from "./release.js";
-import { containerLimits, diskFreePercent, type Limits, type Verdict } from "./safeguards.js";
+import { type ReleaseProject, type ReleaseRuntime, performRelease } from "./release.js";
+import { type Limits, type Verdict, containerLimits, diskFreePercent } from "./safeguards.js";
 import { pinnedImageRef, redact, sourceOf } from "./source.js";
 import { capLogs, loadDb, saveDb, trimDeployments, writeDb } from "./store.js";
-import type { Deployment, DeployTrigger, GitSource, Project } from "../types.js";
 
 export { resolveBuildContext } from "./build-context.js";
 
@@ -56,7 +56,8 @@ export function getRoutePublisher(): RoutePublisher {
 export function defaultDeps(): DeployDeps {
   return {
     steps: {
-      clone: (source, dir, log, track) => cloneRepo(source, dir, config.allowLocalRepos, log, track),
+      clone: (source, dir, log, track) =>
+        cloneRepo(source, dir, config.allowLocalRepos, log, track),
       buildImage,
       pullImage,
     },
@@ -87,7 +88,7 @@ export function subscribeToDeployment(id: string, fn: Subscriber): () => void {
 }
 
 function broadcast(id: string, line: string) {
-  subscribers.get(id)?.forEach((fn) => fn(line));
+  for (const fn of subscribers.get(id) ?? []) fn(line);
 }
 
 // ── Per-project build lock ─────────────────────────────────────────────────
@@ -120,12 +121,17 @@ async function setDepStatus(depId: string, status: Deployment["status"]) {
     const dep = db.deployments.find((d) => d.id === depId);
     if (dep) {
       dep.status = status;
-      if (status === "live" || status === "failed" || status === "cancelled") dep.finishedAt = Date.now();
+      if (status === "live" || status === "failed" || status === "cancelled")
+        dep.finishedAt = Date.now();
     }
   });
 }
 
-async function setProjStatus(projectId: string, status: Project["status"], extra: Partial<Project> = {}) {
+async function setProjStatus(
+  projectId: string,
+  status: Project["status"],
+  extra: Partial<Project> = {},
+) {
   await writeDb((db) => {
     const p = db.projects.find((p) => p.id === projectId);
     if (p) Object.assign(p, { status, updatedAt: Date.now(), ...extra });
@@ -146,7 +152,10 @@ export function guardBuild(project: Project, now: number = Date.now()): Verdict 
     project,
     {
       isBuilding,
-      hostFreePercent: lowestPercent([diskFreePercent(config.dataDir), diskFreePercent(os.tmpdir())]),
+      hostFreePercent: lowestPercent([
+        diskFreePercent(config.dataDir),
+        diskFreePercent(os.tmpdir()),
+      ]),
       sandboxUsedPercent: sandboxFree === null ? null : 100 - sandboxFree,
       now,
     },
@@ -155,7 +164,11 @@ export function guardBuild(project: Project, now: number = Date.now()): Verdict 
 }
 
 // ── Create deployment ──────────────────────────────────────────────────────
-export function createDeployment(project: Project, commitSha: string, triggeredBy: DeployTrigger = "manual"): Deployment {
+export function createDeployment(
+  project: Project,
+  commitSha: string,
+  triggeredBy: DeployTrigger = "manual",
+): Deployment {
   const source = sourceOf(project);
   const dep: Deployment = {
     id: newId("dep"),
@@ -166,7 +179,9 @@ export function createDeployment(project: Project, commitSha: string, triggeredB
     imageTag: "",
     logs: [
       `[nexus] Deploy queued → ${project.name}`,
-      source.type === "git" ? `[nexus] repo=${source.repo}  branch=${source.branch}` : `[nexus] image=${source.image}`,
+      source.type === "git"
+        ? `[nexus] repo=${source.repo}  branch=${source.branch}`
+        : `[nexus] image=${source.image}`,
     ],
     createdAt: Date.now(),
   };
@@ -179,7 +194,9 @@ export function createDeployment(project: Project, commitSha: string, triggeredB
 // ── Notification webhook ───────────────────────────────────────────────────
 async function notify(project: Project, deployment: Deployment) {
   if (!project.notifyUrl) return;
-  const duration = deployment.finishedAt ? Math.round((deployment.finishedAt - deployment.createdAt) / 1000) : null;
+  const duration = deployment.finishedAt
+    ? Math.round((deployment.finishedAt - deployment.createdAt) / 1000)
+    : null;
   const body = {
     project: project.name,
     status: deployment.status,
@@ -192,7 +209,9 @@ async function notify(project: Project, deployment: Deployment) {
   };
   // Discord-compatible: wrap in "content" if URL contains discord.com
   const payload = project.notifyUrl.includes("discord.com")
-    ? { content: `**${project.name}** deploy **${deployment.status}** — ${deployment.commitSha.slice(0, 8)} (${duration}s)` }
+    ? {
+        content: `**${project.name}** deploy **${deployment.status}** — ${deployment.commitSha.slice(0, 8)} (${duration}s)`,
+      }
     : body;
   try {
     await fetch(project.notifyUrl, {
@@ -244,7 +263,11 @@ async function release(
     volume: hasVolume ? { name: `nexus-vol-${project.name}`, path: project.volumePath } : undefined,
     current:
       project.containerName && project.hostPort !== undefined && project.imageTag
-        ? { containerName: project.containerName, imageRef: project.imageTag, hostPort: project.hostPort }
+        ? {
+            containerName: project.containerName,
+            imageRef: project.imageTag,
+            hostPort: project.hostPort,
+          }
         : undefined,
   };
 
@@ -264,7 +287,9 @@ async function release(
         hostPort: outcome.hostPort,
         imageTag: outcome.imageRef,
         previousImageTag:
-          project.imageTag && project.imageTag !== outcome.imageRef ? project.imageTag : project.previousImageTag,
+          project.imageTag && project.imageTag !== outcome.imageRef
+            ? project.imageTag
+            : project.previousImageTag,
         domain: host,
       });
       log(`[nexus] ✅ Live at https://${host}`);
@@ -281,7 +306,7 @@ async function release(
   } finally {
     await writeDb((db) => {
       const p = db.projects.find((p) => p.id === project.id);
-      if (p) delete p.pendingPort;
+      if (p) p.pendingPort = undefined;
     });
   }
 }
@@ -350,7 +375,10 @@ export async function runDeploy(
 
       const tag = `nexus/${project.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}:${deploymentId.slice(-8)}`;
       const contextDir = resolveBuildContext(buildDir, project.buildContext);
-      const dockerfile = resolveDockerfile(buildDir, validateDockerfile(project.dockerfile, project.buildContext ?? "."));
+      const dockerfile = resolveDockerfile(
+        buildDir,
+        validateDockerfile(project.dockerfile, project.buildContext ?? "."),
+      );
       log(`[nexus] Building with ${dockerfile ? "Docker" : "Nixpacks"} → ${tag}`);
       await deps.steps.buildImage({ contextDir, dockerfile, tag }, log, track);
       assertActive();
@@ -377,7 +405,9 @@ export async function runDeploy(
       status = "cancelled";
       await emit("[nexus] ✗ Build cancelled");
     } else if (timedOut) {
-      await emit(`[nexus] ✗ Build exceeded ${Math.round(deps.limits.buildTimeoutMs / 60_000)} minutes and was stopped`);
+      await emit(
+        `[nexus] ✗ Build exceeded ${Math.round(deps.limits.buildTimeoutMs / 60_000)} minutes and was stopped`,
+      );
     } else {
       await emit(`[nexus] ✗ Build failed: ${message}`);
     }

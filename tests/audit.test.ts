@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AUDIT_RETENTION_MS, pruneAudit, recordAudit, type AuditEntry } from "../src/lib/audit.js";
+import { AUDIT_RETENTION_MS, type AuditEntry, pruneAudit, recordAudit } from "../src/lib/audit.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
 test("an entry records who did what to what, and when — and nothing about where from", () => {
   const log: AuditEntry[] = [];
-  const entry = recordAudit(log, { actor: "ada", action: "project.delete", subject: "prj_1" }, 1_000);
+  const entry = recordAudit(
+    log,
+    { actor: "ada", action: "project.delete", subject: "prj_1" },
+    1_000,
+  );
   assert.deepEqual(Object.keys(entry).sort(), ["action", "actor", "at", "id", "subject"]);
   assert.equal(entry.at, 1_000);
   assert.equal(log[0], entry);

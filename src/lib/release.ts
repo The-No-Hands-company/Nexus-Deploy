@@ -68,7 +68,13 @@ export type ReleaseDeps = {
 };
 
 export type ReleaseOutcome =
-  | { ok: true; containerName: string; hostPort: number; imageRef: string; mode: "blue-green" | "stop-start" }
+  | {
+      ok: true;
+      containerName: string;
+      hostPort: number;
+      imageRef: string;
+      mode: "blue-green" | "stop-start";
+    }
   | { ok: false; reason: string; servingPrevious: boolean };
 
 export function releaseContainerName(slug: string, deploymentId: string): string {
@@ -134,7 +140,9 @@ export async function performRelease(
 
   // A volume means one writer at a time: take the old container down first.
   if (project.volume && previous) {
-    log(`[nexus] ${project.slug} keeps data on a volume, so the old release stops before the new one starts`);
+    log(
+      `[nexus] ${project.slug} keeps data on a volume, so the old release stops before the new one starts`,
+    );
     await runtime.remove(previous.containerName);
   }
 
@@ -149,7 +157,13 @@ export async function performRelease(
 
     if (project.volume && previous) {
       log(`[nexus] Restoring previous release → ${previous.imageRef}`);
-      const restored = await startAndProve(project, previous.containerName, previous.imageRef, previous.hostPort, deps);
+      const restored = await startAndProve(
+        project,
+        previous.containerName,
+        previous.imageRef,
+        previous.hostPort,
+        deps,
+      );
       if (restored.ok) {
         log("[nexus] ✓ Previous release is serving again");
         return { ok: false, reason: health.reason, servingPrevious: true };
@@ -162,7 +176,12 @@ export async function performRelease(
   }
 
   try {
-    await publisher.publish({ projectId: project.id, slug: project.slug, host: project.host, hostPort });
+    await publisher.publish({
+      projectId: project.id,
+      slug: project.slug,
+      host: project.host,
+      hostPort,
+    });
   } catch (error) {
     const reason = `could not publish the route: ${(error as Error).message}`;
     log(`[nexus] ✗ ${reason}`);

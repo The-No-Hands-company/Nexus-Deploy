@@ -54,12 +54,24 @@ export function limitsFromEnv(env: Record<string, string | undefined>): Limits {
     cpus: envNumber(env, "CAP_CPUS", DEFAULT_LIMITS.cpus),
     pids: envNumber(env, "CAP_PIDS", DEFAULT_LIMITS.pids),
     maxProjects: envNumber(env, "CAP_MAX_PROJECTS", DEFAULT_LIMITS.maxProjects),
-    maxConcurrentBuilds: envNumber(env, "CAP_MAX_CONCURRENT_BUILDS", DEFAULT_LIMITS.maxConcurrentBuilds),
+    maxConcurrentBuilds: envNumber(
+      env,
+      "CAP_MAX_CONCURRENT_BUILDS",
+      DEFAULT_LIMITS.maxConcurrentBuilds,
+    ),
     maxBuildsPerHour: envNumber(env, "CAP_MAX_BUILDS_PER_HOUR", DEFAULT_LIMITS.maxBuildsPerHour),
     buildTimeoutMs: envNumber(env, "CAP_BUILD_TIMEOUT_MS", DEFAULT_LIMITS.buildTimeoutMs),
     pullTimeoutMs: envNumber(env, "CAP_PULL_TIMEOUT_MS", DEFAULT_LIMITS.pullTimeoutMs),
-    minHostFreePercent: envNumber(env, "CAP_MIN_HOST_FREE_PERCENT", DEFAULT_LIMITS.minHostFreePercent),
-    maxSandboxUsedPercent: envNumber(env, "CAP_MAX_SANDBOX_USED_PERCENT", DEFAULT_LIMITS.maxSandboxUsedPercent),
+    minHostFreePercent: envNumber(
+      env,
+      "CAP_MIN_HOST_FREE_PERCENT",
+      DEFAULT_LIMITS.minHostFreePercent,
+    ),
+    maxSandboxUsedPercent: envNumber(
+      env,
+      "CAP_MAX_SANDBOX_USED_PERCENT",
+      DEFAULT_LIMITS.maxSandboxUsedPercent,
+    ),
   };
 }
 
@@ -81,7 +93,8 @@ export function containerLimits(
   const askedMb = project.memoryLimit ? parseMemoryMb(project.memoryLimit) : null;
   const mb = askedMb !== null && askedMb > 0 ? Math.min(askedMb, limits.memoryMb) : limits.memoryMb;
   const askedCpus = project.cpus ? Number(project.cpus) : Number.NaN;
-  const cpus = Number.isFinite(askedCpus) && askedCpus > 0 ? Math.min(askedCpus, limits.cpus) : limits.cpus;
+  const cpus =
+    Number.isFinite(askedCpus) && askedCpus > 0 ? Math.min(askedCpus, limits.cpus) : limits.cpus;
   return { memory: `${Math.floor(mb)}m`, cpus: String(cpus), pids: limits.pids };
 }
 
@@ -118,7 +131,10 @@ export function checkBuildAllowed(input: BuildContextInputs, limits: Limits): Ve
       message: "This node is low on disk space, so new builds are paused. Try again later.",
     };
   }
-  if (input.sandboxUsedPercent !== null && input.sandboxUsedPercent > limits.maxSandboxUsedPercent) {
+  if (
+    input.sandboxUsedPercent !== null &&
+    input.sandboxUsedPercent > limits.maxSandboxUsedPercent
+  ) {
     return {
       ok: false,
       code: "disk",
@@ -126,7 +142,11 @@ export function checkBuildAllowed(input: BuildContextInputs, limits: Limits): Ve
     };
   }
   if (input.activeBuildsForMember >= limits.maxConcurrentBuilds) {
-    return { ok: false, code: "busy", message: "One of your builds is still running. Wait for it to finish." };
+    return {
+      ok: false,
+      code: "busy",
+      message: "One of your builds is still running. Wait for it to finish.",
+    };
   }
   if (input.buildsLastHourForMember >= limits.maxBuildsPerHour) {
     return {
@@ -147,14 +167,20 @@ export function countRecentBuilds(
   now: number,
 ): number {
   return deployments.filter(
-    (d) => memberProjectIds.has(d.projectId) && d.triggeredBy !== "rollback" && now - d.createdAt < HOUR_MS,
+    (d) =>
+      memberProjectIds.has(d.projectId) &&
+      d.triggeredBy !== "rollback" &&
+      now - d.createdAt < HOUR_MS,
   ).length;
 }
 
 type StatFs = (path: string) => { blocks: number; bavail: number };
 
 /** Free space of the volume holding `path`, 0–100, or null when it cannot be read. */
-export function diskFreePercent(path: string, statfs: StatFs = fs.statfsSync as unknown as StatFs): number | null {
+export function diskFreePercent(
+  path: string,
+  statfs: StatFs = fs.statfsSync as unknown as StatFs,
+): number | null {
   try {
     const stats = statfs(path);
     return stats.blocks > 0 ? (stats.bavail / stats.blocks) * 100 : null;

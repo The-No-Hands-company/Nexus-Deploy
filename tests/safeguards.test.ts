@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  DEFAULT_LIMITS,
   checkBuildAllowed,
   checkProjectQuota,
   containerLimits,
   countRecentBuilds,
-  DEFAULT_LIMITS,
   diskFreePercent,
   limitsFromEnv,
   parseMemoryMb,
 } from "../src/lib/safeguards.js";
 
-const calm = { activeBuildsForMember: 0, buildsLastHourForMember: 0, hostFreePercent: 60, sandboxUsedPercent: 20 };
+const calm = {
+  activeBuildsForMember: 0,
+  buildsLastHourForMember: 0,
+  hostFreePercent: 60,
+  sandboxUsedPercent: 20,
+};
 
 test("the defaults are the documented ones", () => {
   assert.deepEqual(
@@ -19,7 +24,11 @@ test("the defaults are the documented ones", () => {
     [512, 0.5, 256, 5],
   );
   assert.deepEqual(
-    [DEFAULT_LIMITS.maxConcurrentBuilds, DEFAULT_LIMITS.maxBuildsPerHour, DEFAULT_LIMITS.buildTimeoutMs],
+    [
+      DEFAULT_LIMITS.maxConcurrentBuilds,
+      DEFAULT_LIMITS.maxBuildsPerHour,
+      DEFAULT_LIMITS.buildTimeoutMs,
+    ],
     [1, 6, 600_000],
   );
 });
@@ -87,7 +96,10 @@ test("each way a build can be refused has its own code", () => {
 });
 
 test("a full disk is reported before a busy member", () => {
-  const verdict = checkBuildAllowed({ ...calm, hostFreePercent: 5, activeBuildsForMember: 3 }, DEFAULT_LIMITS);
+  const verdict = checkBuildAllowed(
+    { ...calm, hostFreePercent: 5, activeBuildsForMember: 3 },
+    DEFAULT_LIMITS,
+  );
   assert.equal(verdict.ok === false && verdict.code, "disk");
 });
 
@@ -111,8 +123,14 @@ test("only this member's builds in the last hour count, and rollbacks are free",
 });
 
 test("free disk space is a percentage, and unreadable means unknown", () => {
-  assert.equal(diskFreePercent("/x", () => ({ blocks: 1000, bavail: 250 })), 25);
-  assert.equal(diskFreePercent("/x", () => ({ blocks: 0, bavail: 0 })), null);
+  assert.equal(
+    diskFreePercent("/x", () => ({ blocks: 1000, bavail: 250 })),
+    25,
+  );
+  assert.equal(
+    diskFreePercent("/x", () => ({ blocks: 0, bavail: 0 })),
+    null,
+  );
   assert.equal(
     diskFreePercent("/x", () => {
       throw new Error("ENOENT");

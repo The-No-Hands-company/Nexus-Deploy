@@ -12,7 +12,8 @@ export function validateEnv(input: unknown): Record<string, string> {
     throw new Error("env must be an object of names to string values");
   }
   const entries = Object.entries(input as Record<string, unknown>);
-  if (entries.length > MAX_ENTRIES) throw new Error(`env may have at most ${MAX_ENTRIES} variables`);
+  if (entries.length > MAX_ENTRIES)
+    throw new Error(`env may have at most ${MAX_ENTRIES} variables`);
   const out: Record<string, string> = {};
   for (const [key, value] of entries) {
     if (!KEY_RE.test(key)) throw new Error(`"${key}" is not a valid environment variable name`);

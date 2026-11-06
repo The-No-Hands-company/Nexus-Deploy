@@ -1,3 +1,4 @@
+import type { GitSource } from "../types.js";
 /**
  * The three things a deployment actually does to the outside world: clone a
  * repository, build an image, pull an image. They are separate from the
@@ -7,10 +8,9 @@
  * Each step settles when its process ends. Cancelling kills the process, which
  * makes the step reject; build.ts then reads its own flags to say *why*.
  */
-import { dockerPull, spawnStreaming, type LogLine } from "./docker.js";
+import { type LogLine, dockerPull, spawnStreaming } from "./docker.js";
 import { resolveRepoUrl } from "./repo.js";
 import { gitCredentialEnv } from "./source.js";
-import type { GitSource } from "../types.js";
 
 /** Registers a way to stop the running step. */
 export type Track = (kill: () => void) => void;
@@ -22,9 +22,21 @@ export type BuildOptions = {
   tag: string;
 };
 
-function run(cmd: string, args: string[], log: LogLine, track: Track, env?: Record<string, string>): Promise<void> {
+function run(
+  cmd: string,
+  args: string[],
+  log: LogLine,
+  track: Track,
+  env?: Record<string, string>,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const kill = spawnStreaming(cmd, args, log, (err) => (err ? reject(err) : resolve()), env ? { env } : {});
+    const kill = spawnStreaming(
+      cmd,
+      args,
+      log,
+      (err) => (err ? reject(err) : resolve()),
+      env ? { env } : {},
+    );
     track(kill);
   });
 }
@@ -40,7 +52,13 @@ export async function cloneRepo(
   const credentials = gitCredentialEnv(source.token);
   try {
     // `--` ends option parsing, so a repository URL can never be read as a flag.
-    await run("git", ["clone", "--depth", "1", "--branch", source.branch, "--", url, dir], log, track, credentials.env);
+    await run(
+      "git",
+      ["clone", "--depth", "1", "--branch", source.branch, "--", url, dir],
+      log,
+      track,
+      credentials.env,
+    );
   } finally {
     credentials.cleanup();
   }

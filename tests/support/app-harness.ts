@@ -7,14 +7,14 @@
  */
 import { once } from "node:events";
 import fs from "node:fs";
+import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import type { Server } from "node:http";
 import { DEFAULT_LIMITS, type Verdict } from "../../src/lib/safeguards.js";
 import type { Authenticator, NexusIdentity } from "../../src/middleware/auth.js";
 import type { AppDeps, Pipeline, ProjectOps } from "../../src/routes/types.js";
-import type { Deployment, DeployTrigger, Project } from "../../src/types.js";
+import type { DeployTrigger, Deployment, Project } from "../../src/types.js";
 import { RecordingPublisher } from "./fakes.js";
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-routes-"));
@@ -68,7 +68,9 @@ export function addProject(patch: Partial<import("../../src/types.js").Project> 
   return project;
 }
 
-export function addDeployment(patch: Partial<import("../../src/types.js").Deployment> & { projectId: string }) {
+export function addDeployment(
+  patch: Partial<import("../../src/types.js").Deployment> & { projectId: string },
+) {
   const dep = {
     id: `dep_${Math.random().toString(36).slice(2, 12)}`,
     commitSha: "abc12345",
@@ -153,7 +155,15 @@ export class FakeOps implements ProjectOps {
   }
   async stats(name: string) {
     this.calls.push(`stats:${name}`);
-    return { cpu: "1%", memUsage: "10MiB", memLimit: "512MiB", memPercent: "2%", netIn: "1kB", netOut: "1kB", pids: "3" };
+    return {
+      cpu: "1%",
+      memUsage: "10MiB",
+      memLimit: "512MiB",
+      memPercent: "2%",
+      netIn: "1kB",
+      netOut: "1kB",
+      pids: "3",
+    };
   }
   logs(name: string, onLine: (line: string) => void, onEnd?: (err?: Error) => void): () => void {
     this.calls.push(`logs:${name}`);
@@ -170,7 +180,13 @@ export class FakeOps implements ProjectOps {
   }
 }
 
-export type CallOptions = { token?: string; body?: unknown; rawBody?: string; headers?: Record<string, string> };
+export type CallOptions = {
+  token?: string;
+  body?: unknown;
+  rawBody?: string;
+  headers?: Record<string, string>;
+};
+// biome-ignore lint/suspicious/noExplicitAny: a test helper that returns parsed JSON of any shape
 export type CallResult = { status: number; body: any; headers: Headers };
 
 export async function startHarness(patch: Partial<AppDeps> = {}) {
@@ -187,7 +203,11 @@ export async function startHarness(patch: Partial<AppDeps> = {}) {
     limits: DEFAULT_LIMITS,
     allowLocalRepos: false,
     now: () => clock,
-    node: { baseDomain: "example.test", controlHost: "deploy.example.test", hostPattern: "{slug}.{BASE_DOMAIN}" },
+    node: {
+      baseDomain: "example.test",
+      controlHost: "deploy.example.test",
+      hostPattern: "{slug}.{BASE_DOMAIN}",
+    },
     version: "test",
     staticDir: null,
     ...patch,
@@ -197,7 +217,11 @@ export async function startHarness(patch: Partial<AppDeps> = {}) {
   await once(server, "listening");
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-  async function call(method: string, route: string, options: CallOptions = {}): Promise<CallResult> {
+  async function call(
+    method: string,
+    route: string,
+    options: CallOptions = {},
+  ): Promise<CallResult> {
     const headers: Record<string, string> = { ...(options.headers ?? {}) };
     if (options.token) headers["Authorization"] = `Bearer ${options.token}`;
     let body: string | undefined;
@@ -206,8 +230,13 @@ export async function startHarness(patch: Partial<AppDeps> = {}) {
       body = JSON.stringify(options.body);
       headers["Content-Type"] ??= "application/json";
     }
-    const response = await fetch(`${url}${route}`, { method, headers, ...(body !== undefined ? { body } : {}) });
+    const response = await fetch(`${url}${route}`, {
+      method,
+      headers,
+      ...(body !== undefined ? { body } : {}),
+    });
     const text = await response.text();
+    // biome-ignore lint/suspicious/noExplicitAny: parsed JSON of any shape
     let parsed: any = text;
     try {
       parsed = text ? JSON.parse(text) : null;

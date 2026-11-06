@@ -1,10 +1,10 @@
 import type { Request, Response, Router } from "express";
 import { containerNameOf } from "../lib/containers.js";
+import { onStatusChange } from "../lib/events.js";
 import { canAccessProject } from "../lib/members.js";
 import type { Verdict } from "../lib/safeguards.js";
 import { publicProject } from "../lib/source.js";
 import { loadDb, writeDb } from "../lib/store.js";
-import { onStatusChange } from "../lib/events.js";
 import type { Deployment } from "../types.js";
 import { accessOf, audit, ownedProject, paramOf } from "./context.js";
 import type { RouteContext } from "./types.js";
@@ -39,12 +39,15 @@ export function lifecycleRoutes(router: Router, ctx: RouteContext): void {
   router.post("/api/projects/:id/deploy", ...ctx.member, async (req, res) => {
     const project = ownedProject(req, res, paramOf(req, "id"));
     if (!project) return;
-    if (pipeline.isBuilding(project.id)) return void res.status(409).json({ error: "Build already in progress" });
+    if (pipeline.isBuilding(project.id))
+      return void res.status(409).json({ error: "Build already in progress" });
     const verdict = pipeline.guardBuild(project);
     if (!verdict.ok) return void refuse(res, verdict);
 
     const dep = pipeline.createDeployment(project, cleanCommit(req.body?.commitSha), "manual");
-    pipeline.runDeploy(project, dep.id).catch((err) => console.error("[nexus] deploy error:", (err as Error).message));
+    pipeline
+      .runDeploy(project, dep.id)
+      .catch((err) => console.error("[nexus] deploy error:", (err as Error).message));
     await audit(deps, req, "deploy.start", project.id);
     res.json({ deployment: dep });
   });
@@ -52,12 +55,18 @@ export function lifecycleRoutes(router: Router, ctx: RouteContext): void {
   router.post("/api/deployments/:id/rollback", ...ctx.member, async (req, res) => {
     const source = ownedDeployment(req, res, paramOf(req, "id"));
     if (!source) return;
-    if (!source.imageTag) return void res.status(400).json({ error: "No image — cannot roll back" });
+    if (!source.imageTag)
+      return void res.status(400).json({ error: "No image — cannot roll back" });
     const project = loadDb().projects.find((p) => p.id === source.projectId);
     if (!project) return void res.status(404).json({ error: "Not found" });
-    if (pipeline.isBuilding(project.id)) return void res.status(409).json({ error: "Build in progress" });
+    if (pipeline.isBuilding(project.id))
+      return void res.status(409).json({ error: "Build in progress" });
 
-    const dep = pipeline.createDeployment(project, `rollback:${source.commitSha.slice(0, 8)}`, "rollback");
+    const dep = pipeline.createDeployment(
+      project,
+      `rollback:${source.commitSha.slice(0, 8)}`,
+      "rollback",
+    );
     await writeDb((db) => {
       const found = db.deployments.find((d) => d.id === dep.id);
       if (found) found.imageTag = source.imageTag;
@@ -169,7 +178,9 @@ export function lifecycleRoutes(router: Router, ctx: RouteContext): void {
   router.get("/api/activity", ...ctx.member, (req, res) => {
     const access = accessOf(req);
     const db = loadDb();
-    const visible = new Map(db.projects.filter((p) => canAccessProject(p, access)).map((p) => [p.id, p.name]));
+    const visible = new Map(
+      db.projects.filter((p) => canAccessProject(p, access)).map((p) => [p.id, p.name]),
+    );
     res.json({
       activity: db.deployments
         .filter((d) => visible.has(d.projectId))
@@ -220,7 +231,10 @@ export function lifecycleRoutes(router: Router, ctx: RouteContext): void {
       format: "nexus-deploy-project/1",
       project: {
         name: project.name,
-        source: source.type === "git" ? { type: "git", repo: source.repo, branch: source.branch } : source,
+        source:
+          source.type === "git"
+            ? { type: "git", repo: source.repo, branch: source.branch }
+            : source,
         buildContext: project.buildContext,
         dockerfile: project.dockerfile ?? null,
         healthPath: project.healthPath ?? null,

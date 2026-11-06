@@ -1,3 +1,4 @@
+import type { Project, Source } from "../types.js";
 /**
  * Turning a request body into something safe to store.
  *
@@ -12,7 +13,6 @@ import { validateVolumePath } from "./run-args.js";
 import { parseMemoryMb } from "./safeguards.js";
 import { sourceOf, validateBranch, validateImageRef, validateToken } from "./source.js";
 import { validateNotifyUrl } from "./urls.js";
-import type { Project, Source } from "../types.js";
 
 type Body = Record<string, unknown>;
 
@@ -41,7 +41,8 @@ function gitSource(body: Body, allowLocalRepos: boolean, fallbackBranch = "main"
 export function parseSource(body: Body, allowLocalRepos: boolean): Source {
   if (body["source"] !== undefined) {
     const source = asBody(body["source"], "source");
-    if (source["type"] === "image") return { type: "image", image: validateImageRef(source["image"]) };
+    if (source["type"] === "image")
+      return { type: "image", image: validateImageRef(source["image"]) };
     if (source["type"] === "git") return gitSource(source, allowLocalRepos);
     throw new Error('source.type must be "git" or "image"');
   }
@@ -72,7 +73,11 @@ function validateCommand(value: unknown, field: string): string {
 }
 
 function validateMemory(value: unknown): string {
-  if (typeof value !== "string" || parseMemoryMb(value) === null || (parseMemoryMb(value) ?? 0) <= 0) {
+  if (
+    typeof value !== "string" ||
+    parseMemoryMb(value) === null ||
+    (parseMemoryMb(value) ?? 0) <= 0
+  ) {
     throw new Error("memoryLimit must look like 256m or 1g");
   }
   return value;
@@ -80,7 +85,8 @@ function validateMemory(value: unknown): string {
 
 function validateCpus(value: unknown): string {
   const n = typeof value === "string" ? Number(value) : value;
-  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0 || n > 64) throw new Error("cpus must be a positive number");
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0 || n > 64)
+    throw new Error("cpus must be a positive number");
   return String(n);
 }
 
@@ -109,14 +115,23 @@ export function parseNewProject(raw: unknown, allowLocalRepos: boolean): NewProj
     source,
     // Only a missing value defaults; an explicit null or empty one is a mistake to refuse.
     buildContext:
-      source.type === "git" && body["buildContext"] !== undefined ? validateBuildContext(body["buildContext"]) : ".",
+      source.type === "git" && body["buildContext"] !== undefined
+        ? validateBuildContext(body["buildContext"])
+        : ".",
     ...(source.type === "git" && present(body["dockerfile"])
       ? { dockerfile: validateDockerfile(body["dockerfile"], ".") }
       : {}),
     ...(present(body["healthPath"]) ? { healthPath: validateHealthPath(body["healthPath"]) } : {}),
-    buildCommand: body["buildCommand"] === undefined ? "npm run build" : validateCommand(body["buildCommand"], "buildCommand"),
-    startCommand: body["startCommand"] === undefined ? "npm start" : validateCommand(body["startCommand"], "startCommand"),
-    volumePath: body["volumePath"] === undefined ? "/workspace" : validateVolume(body["volumePath"]),
+    buildCommand:
+      body["buildCommand"] === undefined
+        ? "npm run build"
+        : validateCommand(body["buildCommand"], "buildCommand"),
+    startCommand:
+      body["startCommand"] === undefined
+        ? "npm start"
+        : validateCommand(body["startCommand"], "startCommand"),
+    volumePath:
+      body["volumePath"] === undefined ? "/workspace" : validateVolume(body["volumePath"]),
     port: body["port"] === undefined ? 3000 : validatePort(body["port"]),
   };
 }
@@ -154,7 +169,10 @@ export function parsePatch(
 
   if (body["source"] !== undefined) {
     patch.source = parseSource(body, allowLocalRepos);
-  } else if (existing.type === "git" && ["repo", "branch", "token"].some((k) => body[k] !== undefined)) {
+  } else if (
+    existing.type === "git" &&
+    ["repo", "branch", "token"].some((k) => body[k] !== undefined)
+  ) {
     const next = gitSource(
       { repo: body["repo"] ?? existing.repo, branch: body["branch"] ?? existing.branch },
       allowLocalRepos,
@@ -169,26 +187,41 @@ export function parsePatch(
     patch.source = { type: "image", image: validateImageRef(body["image"]) };
   }
 
-  if (body["buildContext"] !== undefined) patch.buildContext = validateBuildContext(body["buildContext"]);
+  if (body["buildContext"] !== undefined)
+    patch.buildContext = validateBuildContext(body["buildContext"]);
   if (body["dockerfile"] !== undefined) {
-    patch.dockerfile = cleared(body["dockerfile"]) ? null : validateDockerfile(body["dockerfile"], ".");
+    patch.dockerfile = cleared(body["dockerfile"])
+      ? null
+      : validateDockerfile(body["dockerfile"], ".");
   }
   if (body["healthPath"] !== undefined) {
     patch.healthPath = cleared(body["healthPath"]) ? null : validateHealthPath(body["healthPath"]);
   }
-  if (body["buildCommand"] !== undefined) patch.buildCommand = validateCommand(body["buildCommand"], "buildCommand");
-  if (body["startCommand"] !== undefined) patch.startCommand = validateCommand(body["startCommand"], "startCommand");
+  if (body["buildCommand"] !== undefined)
+    patch.buildCommand = validateCommand(body["buildCommand"], "buildCommand");
+  if (body["startCommand"] !== undefined)
+    patch.startCommand = validateCommand(body["startCommand"], "startCommand");
   if (body["volumePath"] !== undefined) patch.volumePath = validateVolume(body["volumePath"]);
   if (body["port"] !== undefined) patch.port = validatePort(body["port"]);
   if (body["memoryLimit"] !== undefined) {
     patch.memoryLimit = cleared(body["memoryLimit"]) ? null : validateMemory(body["memoryLimit"]);
   }
-  if (body["cpus"] !== undefined) patch.cpus = cleared(body["cpus"]) ? null : validateCpus(body["cpus"]);
+  if (body["cpus"] !== undefined)
+    patch.cpus = cleared(body["cpus"]) ? null : validateCpus(body["cpus"]);
   if (body["notifyUrl"] !== undefined) {
     patch.notifyUrl = cleared(body["notifyUrl"]) ? null : validateNotifyUrl(body["notifyUrl"]);
   }
-  if (body["autoDeployEnabled"] !== undefined) patch.autoDeployEnabled = Boolean(body["autoDeployEnabled"]);
+  if (body["autoDeployEnabled"] !== undefined)
+    patch.autoDeployEnabled = Boolean(body["autoDeployEnabled"]);
   return patch;
+}
+
+type ClearableField = "dockerfile" | "healthPath" | "memoryLimit" | "cpus" | "notifyUrl";
+
+function unset(project: Project, field: ClearableField): void {
+  // An absent field is what "cleared" means. Assigning undefined would leave an
+  // own key behind, which later code (and the tests) would read as "present".
+  delete project[field];
 }
 
 /** Apply a validated patch to a stored project, keeping the display copy of the source in step. */
@@ -199,19 +232,19 @@ export function applyPatch(project: Project, patch: ProjectPatch, now: number): 
     project.branch = patch.source.type === "git" ? patch.source.branch : "";
   }
   if (patch.buildContext !== undefined) project.buildContext = patch.buildContext;
-  if (patch.dockerfile === null) delete project.dockerfile;
+  if (patch.dockerfile === null) unset(project, "dockerfile");
   else if (patch.dockerfile !== undefined) project.dockerfile = patch.dockerfile;
-  if (patch.healthPath === null) delete project.healthPath;
+  if (patch.healthPath === null) unset(project, "healthPath");
   else if (patch.healthPath !== undefined) project.healthPath = patch.healthPath;
   if (patch.buildCommand !== undefined) project.buildCommand = patch.buildCommand;
   if (patch.startCommand !== undefined) project.startCommand = patch.startCommand;
   if (patch.volumePath !== undefined) project.volumePath = patch.volumePath;
   if (patch.port !== undefined) project.port = patch.port;
-  if (patch.memoryLimit === null) delete project.memoryLimit;
+  if (patch.memoryLimit === null) unset(project, "memoryLimit");
   else if (patch.memoryLimit !== undefined) project.memoryLimit = patch.memoryLimit;
-  if (patch.cpus === null) delete project.cpus;
+  if (patch.cpus === null) unset(project, "cpus");
   else if (patch.cpus !== undefined) project.cpus = patch.cpus;
-  if (patch.notifyUrl === null) delete project.notifyUrl;
+  if (patch.notifyUrl === null) unset(project, "notifyUrl");
   else if (patch.notifyUrl !== undefined) project.notifyUrl = patch.notifyUrl;
   if (patch.autoDeployEnabled !== undefined) project.autoDeployEnabled = patch.autoDeployEnabled;
   project.updatedAt = now;

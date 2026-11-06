@@ -36,7 +36,8 @@ export function validateVolumePath(path: unknown): string {
 export function buildRunArgs(spec: RunSpec): string[] {
   if (!NAME_RE.test(spec.name)) throw new Error(`unsafe container name: ${spec.name}`);
   if (spec.volume) {
-    if (!VOLUME_NAME_RE.test(spec.volume.name)) throw new Error(`unsafe volume name: ${spec.volume.name}`);
+    if (!VOLUME_NAME_RE.test(spec.volume.name))
+      throw new Error(`unsafe volume name: ${spec.volume.name}`);
     validateVolumePath(spec.volume.path);
   }
   return [

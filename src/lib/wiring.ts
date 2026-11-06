@@ -55,7 +55,8 @@ export function realDeps(): AppDeps {
     pipeline: {
       createDeployment,
       runDeploy: (project, deploymentId) => runDeploy(project, deploymentId),
-      runRollback: (project, deploymentId, imageRef) => runRollback(project, deploymentId, imageRef),
+      runRollback: (project, deploymentId, imageRef) =>
+        runRollback(project, deploymentId, imageRef),
       isBuilding,
       cancelBuild,
       guardBuild: (project) => guardBuild(project),
@@ -67,7 +68,11 @@ export function realDeps(): AppDeps {
     limits: config.limits,
     allowLocalRepos: config.allowLocalRepos,
     now: Date.now,
-    node: { baseDomain: config.baseDomain, controlHost: config.controlHost, hostPattern: config.appHostPattern },
+    node: {
+      baseDomain: config.baseDomain,
+      controlHost: config.controlHost,
+      hostPattern: config.appHostPattern,
+    },
     version: packageVersion(),
     staticDir: "web/dist",
   };

@@ -4,7 +4,10 @@ import { appHost, appUrl, parsePortRange } from "../src/lib/hosts.js";
 
 test("the default pattern puts the slug one level under the base domain", () => {
   assert.equal(appHost("my-app", "{slug}.{BASE_DOMAIN}", "example.test"), "my-app.example.test");
-  assert.equal(appUrl("my-app", "{slug}.{BASE_DOMAIN}", "example.test"), "https://my-app.example.test");
+  assert.equal(
+    appUrl("my-app", "{slug}.{BASE_DOMAIN}", "example.test"),
+    "https://my-app.example.test",
+  );
 });
 
 test("a node can choose a different pattern", () => {

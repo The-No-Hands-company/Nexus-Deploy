@@ -84,7 +84,11 @@ export function fakeClock() {
   };
 }
 
-export function makeDeps(runtime: FakeRuntime, publisher: RecordingPublisher, ports: number[]): ReleaseDeps & {
+export function makeDeps(
+  runtime: FakeRuntime,
+  publisher: RecordingPublisher,
+  ports: number[],
+): ReleaseDeps & {
   clock: ReturnType<typeof fakeClock>;
   logs: string[];
 } {
