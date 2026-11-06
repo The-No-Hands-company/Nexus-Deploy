@@ -3,10 +3,13 @@
  * status in the DB when reality diverges from what we have stored.
  * Also prunes old nexus Docker images once per hour.
  */
-import { writeDb, loadDb } from "./store.js";
-import { dockerStatus, spawnStream } from "./docker.js";
+import { pruneAudit } from "./audit.js";
 import { isBuilding } from "./build.js";
+import { containerNameOf } from "./containers.js";
+import { dockerListImages, dockerRemoveImage, dockerStatus } from "./docker.js";
 import { emitStatusChange } from "./events.js";
+import { imagesToPrune, keepRefs } from "./prune.js";
+import { loadDb, writeDb } from "./store.js";
 
 const DOCKER_TO_PROJECT: Record<string, string> = {
   running: "live",
@@ -22,7 +25,7 @@ async function syncOnce() {
   const toSync = db.projects.filter(p => p.containerId && !isBuilding(p.id));
 
   for (const project of toSync) {
-    const dockerState = await dockerStatus(`nexus-app-${project.name}`);
+    const dockerState = await dockerStatus(containerNameOf(project));
     const expected = DOCKER_TO_PROJECT[dockerState] ?? "stopped";
 
     if (project.status !== expected) {
@@ -36,27 +39,18 @@ async function syncOnce() {
   }
 }
 
-// ── Image pruning ──────────────────────────────────────────────────────────
-async function pruneImages() {
+// ── Housekeeping ───────────────────────────────────────────────────────────
+// Images nothing needs, and audit entries past their thirty days. Docker itself
+// refuses to remove an image a container still uses, so this never forces.
+async function housekeeping() {
   const db = loadDb();
-  const activeImages = new Set(db.projects.map(p => p.imageTag).filter(Boolean));
-
-  const images: string[] = [];
-  await spawnStream(
-    "docker",
-    ["images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=nexus/*"],
-    line => images.push(line.trim())
-  ).catch(() => {});
-
+  const doomed = imagesToPrune(await dockerListImages(), keepRefs(db));
   let pruned = 0;
-  for (const image of images) {
-    if (!activeImages.has(image)) {
-      await spawnStream("docker", ["rmi", "-f", image], () => {}).catch(() => {});
-      pruned++;
-    }
-  }
-
+  for (const ref of doomed) if (await dockerRemoveImage(ref)) pruned++;
   if (pruned > 0) console.log(`[image-prune] Removed ${pruned} unused image(s)`);
+  await writeDb((d) => {
+    pruneAudit(d.audit, Date.now());
+  });
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
@@ -65,8 +59,8 @@ export function startStatusSync(intervalMs = 30_000) {
   const syncInterval = setInterval(() => syncOnce().catch(console.error), intervalMs);
 
   // Prune once after 5 min, then every hour
-  const firstPrune = setTimeout(() => pruneImages().catch(console.error), 5 * 60_000);
-  const pruneInterval = setInterval(() => pruneImages().catch(console.error), 60 * 60_000);
+  const firstPrune = setTimeout(() => housekeeping().catch(console.error), 5 * 60_000);
+  const pruneInterval = setInterval(() => housekeeping().catch(console.error), 60 * 60_000);
 
   return () => {
     clearTimeout(firstSync); clearInterval(syncInterval);
