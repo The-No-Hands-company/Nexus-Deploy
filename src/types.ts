@@ -21,6 +21,11 @@ export type Member = {
   label?: string;
 };
 
+/** Exactly one source per project. A Git source is cloned and built; an image source is pulled. */
+export type GitSource = { type: "git"; repo: string; branch: string; token?: string };
+export type ImageSource = { type: "image"; image: string };
+export type Source = GitSource | ImageSource;
+
 export type ProjectStatus = "idle" | "building" | "live" | "failed" | "stopped";
 
 export type Project = {
@@ -28,8 +33,12 @@ export type Project = {
   /** Nexus-Auth id of the member who owns it. Absent only on projects from before ownership existed. */
   ownerId?: string;
   name: string;
+  /** Display copy of the source: the repo URL, or the image reference for an image project. */
   repo: string;
+  /** Branch for a Git source; empty for an image project. */
   branch: string;
+  /** Authoritative source. Absent on projects from before sources existed: see sourceOf(). */
+  source?: Source;
   buildContext: string;
   dockerfile?: string;      // relative to the repo root; default <buildContext>/Dockerfile
   healthPath?: string;      // must answer 2xx before a release is live; default: any non-5xx on "/"
