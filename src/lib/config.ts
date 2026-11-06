@@ -56,7 +56,6 @@ export const config = {
   nexusAuthPublicUrl:
     process.env.NEXUS_AUTH_PUBLIC_URL ?? process.env.NEXUS_AUTH_URL ?? "http://localhost:4310",
   webhookSecret: process.env.WEBHOOK_SECRET ?? "",
-  dockerNetwork: process.env.DOCKER_NETWORK ?? "nexus-net",
   // file: repositories clone off this machine's disk; off unless a test harness
   // asks for them. See src/lib/repo.ts.
   allowLocalRepos: (process.env.DEPLOY_ALLOW_LOCAL_REPOS ?? "false") === "true",

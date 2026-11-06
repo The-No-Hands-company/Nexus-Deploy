@@ -2,13 +2,13 @@
 
 **Self-hosted deployment platform by [The No Hands Company](https://github.com/The-No-Hands-company)**
 
-Push to GitHub → auto-build → live HTTPS app. Your own Railway, on your own server.
+Deploy a Git repository or a container image and get a live HTTPS app. A free, open-source alternative to paid deployment platforms such as Railway and Render, for anyone to run or use.
 
 ---
 
 ## 💸 Pricing
 
-**Free. Always. No exceptions.**
+**Free. Always. No exceptions.** Nexus Deploy is part of [The No Hands Company](https://github.com/The-No-Hands-company)'s promise that nothing it makes is sold or put behind a paywall. The software contains no billing or plans. Safeguards that protect a shared node (CPU, memory and build limits) apply equally to everyone and are shown in the dashboard. Anyone running their own node may charge for it; the licence allows that.
 
 Nexus Deploy is and will always be 100% free. The No Hands Company does not bill users for any of its products. [Donations welcome](https://github.com/The-No-Hands-company) — never required.
 
@@ -29,6 +29,10 @@ Nexus Deploy is and will always be 100% free. The No Hands Company does not bill
 | **No vendor lock-in** | Runs on any VPS with Docker. Owns your data. |
 
 ---
+
+## 📌 Status of this release (v0.6)
+
+This release turns Nexus Deploy into something a node can share between invited members, safely. It adds members and per-user ownership, two kinds of source (Git and Docker image), private repositories, blue/green releases, safeguards, a sandboxed Docker daemon requirement and a route-publishing interface. Three things come in following releases: the sandbox **setup script**, the **ingress integration** that makes apps reachable (the reference node uses the Nexus ecosystem proxy and Cloud's registry), and the **conformance check** (`doctor` / `verify`). Until then the Traefik-and-Let's-Encrypt compose file below is **not supported**: app containers are no longer labelled for Traefik.
 
 ## 🏗️ Architecture
 
@@ -168,7 +172,7 @@ The app stores data in `DATA_DIR` (default `/workspace`). In dev it creates `./w
 
 ## 📄 License
 
-MIT — fork it, own it, run it.
+[GNU AGPL-3.0](LICENSE). Fork it, change it, run it; if you offer a changed version to others as a service, share your changes too. (This file used to say MIT, which was wrong: the repository has always carried the AGPL.)
 
 ---
 

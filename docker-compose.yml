@@ -1,3 +1,9 @@
+# NOTE (v0.6): this Traefik-and-Let's-Encrypt stack is no longer supported as shipped.
+# App containers are no longer labelled for Traefik; apps are published on loopback
+# ports and announced through a route publisher instead, and builds run in a
+# separate rootless sandbox daemon (SANDBOX_DOCKER_HOST). A maintained self-host
+# guide arrives with the sandbox setup script. Kept for reference only.
+#
 # Nexus Deploy — full production stack
 # Traefik handles HTTPS + routing. nexus-deploy handles builds + dashboard.
 #

@@ -1,8 +1,7 @@
 # Nexus Deploy — Agent Guide
 
 ## Purpose
-Self-hosted Railway-style deployment platform by The No Hands Company.
-Push to GitHub → auto-build → live HTTPS app. Free forever, no billing, ever.
+A free, open-source alternative to paid deployment platforms (Railway, Render) by The No Hands Company. Deploy a Git repo or a container image and get a live HTTPS app. A general service for anyone: no Nexus app is special to it.
 
 ## Architecture
 ```
@@ -68,6 +67,19 @@ Token accepted as:
 - `Authorization: Bearer <token>` — for all API calls
 - `?token=<token>` — for SSE (EventSource) and WebSocket (browser limitation)
 
+## How it fits together (v0.6)
+- `src/app.ts` builds the HTTP app from injected dependencies (`AppDeps`); `src/index.ts` only wires the real ones and listens. Tests inject fakes, so nothing needs Nexus-Auth, Docker or Git.
+- **Members and ownership** (`lib/members.ts`): Nexus-Auth proves identity; an operator (Auth founder/admin) lets accounts in. Every project has an `ownerId`; another member's project answers 404, exactly like a missing one. Operators see all.
+- **Sources** (`lib/source.ts`): a project has one source, Git or image. A private-repo token is handed to git by an askpass helper, never put in a URL, argument, log or API response.
+- **Pipeline** (`lib/build.ts`): clone/build or pull, then `lib/release.ts` starts the new container on its own loopback port, proves it healthy, tells the ingress through a `RoutePublisher`, then stops the old one (blue/green). A project with a data volume releases stop-then-start instead.
+- **Sandbox**: every `docker`/`nixpacks` call is forced to `SANDBOX_DOCKER_HOST` and refuses to run without it. Never fall back to the host daemon. App containers are started only through `lib/run-args.ts`, which drops all capabilities and caps CPU, memory, processes and logs.
+- **Privacy**: no visitor address is read or stored anywhere (scripts/check-privacy.sh in the monorepo enforces it). The audit log records account, action and time only, for thirty days.
+- Node-specific values (`BASE_DOMAIN`, `APP_HOST_PATTERN`, `CONTROL_HOST`, `SANDBOX_*`, `APP_PORT_RANGE`, `CAP_*`) are configuration; no source file may name a domain (a test enforces it).
+
+## Testing
+- `node --import tsx --test tests/*.test.ts` runs everything; `npm run typecheck` and `npm run typecheck:tests` must be clean. New code must also pass `biome check` (the older files still have a lint backlog, which is not part of any slice).
+- On a filesystem that cannot execute binaries, point `ESBUILD_BINARY_PATH` at an executable copy of esbuild.
+
 ## Conventions
 - Keep it lean. No ORM, no message queue, no microservices.
 - All DB writes go through `writeDb(mutate)` — never call `saveDb` during builds.
@@ -77,7 +89,7 @@ Token accepted as:
 - Image naming: `nexus/{project-name}:{8-char-deployment-id}`
 - Container naming: `nexus-app-{project-name}`
 - Volume naming: `nexus-vol-{project-name}` (mounted at project.volumePath)
-- Never add billing, limits, or feature gates. Free forever.
+- Never add billing, plans or paywalls. Free forever. Safeguards that protect a shared node (container caps, build limits, the disk guard) are allowed and apply equally to everyone; an operator tunes them for the whole node with CAP_* variables.
 
 ## Standards Enforcement
 - Follow ../docs/ENGINEERING_STANDARDS.md as the baseline for TypeScript quality, API behavior, observability, and security.
