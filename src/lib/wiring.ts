@@ -9,7 +9,6 @@ import type { AppDeps, ProjectOps } from "../routes/types.js";
 import {
   cancelBuild,
   createDeployment,
-  getRoutePublisher,
   guardBuild,
   isBuilding,
   runDeploy,
@@ -27,6 +26,8 @@ import {
   dockerStatus,
   dockerStop,
 } from "./docker.js";
+import { type Edge, createEdge } from "./edge.js";
+import { loadDb } from "./store.js";
 
 export const dockerOps: ProjectOps = {
   stop: dockerStop,
@@ -49,7 +50,12 @@ export function packageVersion(): string {
   }
 }
 
-export function realDeps(): AppDeps {
+/** The ingress this node is configured with. */
+export function realEdge(): Edge {
+  return createEdge(config, () => loadDb().projects);
+}
+
+export function realDeps(edge: Edge): AppDeps {
   return {
     authenticate: authenticateWithNexusAuth,
     pipeline: {
@@ -62,9 +68,8 @@ export function realDeps(): AppDeps {
       guardBuild: (project) => guardBuild(project),
     },
     ops: dockerOps,
-    publisher: getRoutePublisher(),
-    // Until the edge is wired in, only Deploy's own projects are checked for a taken name.
-    takenElsewhere: async () => false,
+    publisher: edge.publisher,
+    takenElsewhere: edge.takenElsewhere,
     limits: config.limits,
     allowLocalRepos: config.allowLocalRepos,
     now: Date.now,
