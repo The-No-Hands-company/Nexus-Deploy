@@ -136,3 +136,10 @@ test("applying a patch updates the project and keeps the display copy of the sou
   assert.equal("cpus" in project, false);
   assert.equal(project.updatedAt, 99);
 });
+
+test("an explicit empty or null build context is refused, while a missing one defaults to the root", () => {
+  assert.equal(parseNewProject({ name: "x", repo: "o/r" }, false).buildContext, ".");
+  for (const bad of [null, "", " ", 42, {}, []]) {
+    assert.throws(() => parseNewProject({ name: "x", repo: "o/r", buildContext: bad }, false), /buildContext/, String(bad));
+  }
+});

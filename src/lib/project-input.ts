@@ -107,7 +107,9 @@ export function parseNewProject(raw: unknown, allowLocalRepos: boolean): NewProj
   return {
     name: body["name"],
     source,
-    buildContext: source.type === "git" ? validateBuildContext(body["buildContext"] ?? ".") : ".",
+    // Only a missing value defaults; an explicit null or empty one is a mistake to refuse.
+    buildContext:
+      source.type === "git" && body["buildContext"] !== undefined ? validateBuildContext(body["buildContext"]) : ".",
     ...(source.type === "git" && present(body["dockerfile"])
       ? { dockerfile: validateDockerfile(body["dockerfile"], ".") }
       : {}),

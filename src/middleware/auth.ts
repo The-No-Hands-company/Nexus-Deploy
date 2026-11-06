@@ -1,15 +1,26 @@
-import type { Request, Response, NextFunction } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { config } from "../lib/config.js";
+import type { GrantedAccess } from "../lib/members.js";
 
 export type NexusIdentity = {
   id: string;
   username?: string;
   email?: string;
-  roles?: string[];
+  /** "founder" | "admin" | "user" … as Nexus-Auth reports it. */
+  role?: string;
   [key: string]: unknown;
 };
 
-export type AuthedRequest = Request & { userId?: string; user?: NexusIdentity };
+export type AuthedRequest = Request & { userId?: string; user?: NexusIdentity; access?: GrantedAccess };
+
+/** What asking the identity service about a credential can come to. */
+export type AuthResult =
+  | { kind: "ok"; identity: NexusIdentity }
+  | { kind: "denied" }
+  | { kind: "unavailable" };
+
+/** A function from a raw credential to who it belongs to. Injected so tests need no Nexus-Auth. */
+export type Authenticator = (token: string) => Promise<AuthResult>;
 
 const SESSION_COOKIE = "nexus_session";
 
@@ -36,62 +47,47 @@ function readSessionCookie(req: Request): string | undefined {
  * Authenticate against Nexus-Auth — the ecosystem's identity service — rather
  * than against a user table owned by this app.
  *
- * Nexus-Auth already existed and exposed exactly the endpoint needed
- * (GET /api/v1/auth/check → 401, or 200 with { userId, user }), but nothing
- * called it: Cloud, Deploy and Vault had each grown a separate login. The
- * visible symptom was a user creating an account in Cloud and then being asked
- * to sign up again here, which is not what "one ecosystem" means.
- *
- * A session token is opaque, not a JWT, so it cannot be verified locally — this
- * asks the issuer. That is one request per authenticated call; if it becomes
- * hot, the answer is a short-lived cache keyed on the token, not going back to
- * a private user table.
- *
- * Credentials are accepted in the same three forms as before, plus the shared
- * cookie:
- *   1. Authorization: Bearer <token>   (API clients)
- *   2. nexus_session cookie            (browsers, set at the apex domain)
- *   3. ?token=<token>                  (SSE / WebSocket, which cannot set headers)
+ * Nexus-Auth exposes GET /api/v1/auth/check → 401, or 200 with { userId, user }.
+ * A session token is opaque, not a JWT, so it cannot be verified locally; this
+ * asks the issuer, once per authenticated call.
  */
-/**
- * Verify a raw credential against Nexus-Auth, returning the identity or null.
- *
- * Exported for the WebSocket upgrade paths, which never pass through Express
- * middleware. They previously verified a locally-issued JWT, so leaving them
- * alone would have kept a second, private authentication path alive behind the
- * front door — the exact thing this change exists to remove.
- */
-export async function verifyWithNexusAuth(token: string): Promise<NexusIdentity | null> {
+export const authenticateWithNexusAuth: Authenticator = async (token) => {
   const url = `${config.nexusAuthUrl.replace(/\/+$/, "")}/api/v1/auth/check`;
+  let response: globalThis.Response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       signal: AbortSignal.timeout(config.nexusAuthTimeoutMs),
     });
-    if (!response.ok) return null;
-    const body = (await response.json().catch(() => null)) as
-      | { authorized?: boolean; userId?: string; user?: NexusIdentity }
-      | null;
-    if (!body?.authorized || !body.userId) return null;
-    return body.user ?? { id: body.userId };
   } catch {
-    return null;
+    // Unreachable is not "wrong credentials": telling a signed-in person to sign
+    // in again because the identity service is down would be a lie.
+    return { kind: "unavailable" };
   }
-}
+  if (response.status >= 500) return { kind: "unavailable" };
+  if (!response.ok) return { kind: "denied" };
+  const body = (await response.json().catch(() => null)) as
+    | { authorized?: boolean; userId?: string; user?: NexusIdentity }
+    | null;
+  if (!body?.authorized || !body.userId) return { kind: "denied" };
+  return { kind: "ok", identity: { ...(body.user ?? {}), id: body.userId } };
+};
 
+/** Identity for the WebSocket upgrade paths, which never pass through Express middleware. */
+export async function verifyWithNexusAuth(
+  token: string,
+  authenticate: Authenticator = authenticateWithNexusAuth,
+): Promise<NexusIdentity | null> {
+  const result = await authenticate(token);
+  return result.kind === "ok" ? result.identity : null;
+}
 
 /**
  * Send a browser to the ecosystem sign-in page instead of answering 401.
- *
- * The apex hosts the only login form, but nothing pointed at it: an
- * unauthenticated navigation got a bare JSON 401, which a person sees as a wall
- * of text rather than a way in. API clients still get the 401 they can act on —
- * the two are distinguished by whether the request looks like a navigation
- * (Accept includes text/html and it is a GET), not by guessing from user agents.
- *
- * The redirect carries the URL the user was trying to reach, so they land back
- * where they meant to be. Nexus-Auth refuses any redirect target outside the
- * parent domain, so this cannot be turned into an open redirect from here.
+ * API clients still get the 401 they can act on; the two are told apart by
+ * whether the request looks like a navigation (a GET accepting text/html).
+ * Nexus-Auth refuses any redirect target outside the parent domain, so this
+ * cannot become an open redirect.
  */
 function wantsHtml(req: Request): boolean {
   return req.method === "GET" && (req.headers.accept ?? "").includes("text/html");
@@ -105,7 +101,6 @@ function loginUrlFor(req: Request): string {
   return `${base}/login?redirect=${encodeURIComponent(here)}`;
 }
 
-/** 401 for machines, a trip to the sign-in page for people. */
 function denyUnauthenticated(req: Request, res: Response): void {
   if (wantsHtml(req)) {
     res.redirect(302, loginUrlFor(req));
@@ -114,56 +109,33 @@ function denyUnauthenticated(req: Request, res: Response): void {
   res.status(401).json({ error: "Unauthorized" });
 }
 
-export async function requireAuth(
-  req: AuthedRequest,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
-  const header = req.headers.authorization;
-  const bearer = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
-  const raw = bearer ?? readSessionCookie(req) ?? (req.query.token as string | undefined);
-
-  if (!raw) {
-    denyUnauthenticated(req, res);
-    return;
-  }
-
-  const url = `${config.nexusAuthUrl.replace(/\/+$/, "")}/api/v1/auth/check`;
-
-  let response: globalThis.Response;
-  try {
-    response = await fetch(url, {
-      headers: { Authorization: `Bearer ${raw}`, Accept: "application/json" },
-      signal: AbortSignal.timeout(config.nexusAuthTimeoutMs),
-    });
-  } catch {
-    // Identity provider unreachable. Fail closed with a distinct status: a 401
-    // would tell the user their credentials are wrong, which is a lie that
-    // sends them to re-authenticate against a service that is simply down.
-    res.status(503).json({
-      error: "Identity service unavailable",
-      hint: `Could not reach Nexus-Auth at ${config.nexusAuthUrl}`,
-    });
-    return;
-  }
-
-  if (!response.ok) {
-    denyUnauthenticated(req, res);
-    return;
-  }
-
-  const body = (await response.json().catch(() => null)) as
-    | { authorized?: boolean; userId?: string; user?: NexusIdentity }
-    | null;
-
-  if (!body?.authorized || !body.userId) {
-    denyUnauthenticated(req, res);
-    return;
-  }
-
-  req.userId = body.userId;
-  // Carry the identity through so handlers can answer "who am I" without a
-  // local user table to look it up in.
-  req.user = body.user ?? { id: body.userId };
-  next();
+/**
+ * Credentials are accepted as `Authorization: Bearer`, the shared session
+ * cookie, or `?token=` (for SSE, which cannot set headers).
+ */
+export function makeRequireAuth(authenticate: Authenticator) {
+  return async (req: AuthedRequest, res: Response, next: NextFunction): Promise<void> => {
+    const header = req.headers.authorization;
+    const bearer = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+    const raw = bearer ?? readSessionCookie(req) ?? (req.query["token"] as string | undefined);
+    if (!raw) {
+      denyUnauthenticated(req, res);
+      return;
+    }
+    const result = await authenticate(raw);
+    if (result.kind === "unavailable") {
+      res.status(503).json({
+        error: "Identity service unavailable",
+        hint: "Nexus-Auth could not be reached. Try again shortly.",
+      });
+      return;
+    }
+    if (result.kind === "denied") {
+      denyUnauthenticated(req, res);
+      return;
+    }
+    req.userId = result.identity.id;
+    req.user = result.identity;
+    next();
+  };
 }

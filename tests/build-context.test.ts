@@ -13,7 +13,8 @@ process.env.APP_SECRET = "disposable-context-test-secret";  // pragma: allowlist
 const { loadDb, saveDb } = await import("../src/lib/store.js");
 const auth = createServer((_req, res) => {
   res.setHeader("Content-Type", "application/json");
-  res.end(JSON.stringify({ authorized: true, userId: "test-user" }));
+  // A founder, so the first request seeds the owner (members are otherwise invite-only).
+  res.end(JSON.stringify({ authorized: true, userId: "test-user", user: { id: "test-user", role: "founder" } }));
 });
 let child: ReturnType<typeof spawn>;
 let base: string;
