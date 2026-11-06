@@ -36,6 +36,18 @@ export const config = {
   // Mount point of the sandbox's size-capped storage. Builds are refused when it,
   // or the data directory's volume, is nearly full.
   sandboxStoragePath: process.env.SANDBOX_STORAGE_PATH ?? "",
+  // Nexus Cloud's registry is how the ingress learns where a live app listens.
+  // Empty CLOUD_URL means this node has no ingress to tell: nothing is announced.
+  cloudUrl: process.env.CLOUD_URL ?? "",
+  // Cloud's credential for apps members deploy. Not the node API key: that one is
+  // shared by every ecosystem service and cannot publish an isolated route.
+  cloudUserAppsKey: process.env.CLOUD_USER_APPS_KEY ?? "",
+  cloudTimeoutMs: Number(process.env.CLOUD_TIMEOUT_MS ?? 5000),
+  // How often live routes are re-announced, which is also Cloud's heartbeat.
+  cloudHeartbeatMs: Number(process.env.CLOUD_HEARTBEAT_MS ?? 30_000),
+  // Hosting's site-proxy, asked whether a name already belongs to a site so a new
+  // app never shadows one. Empty means this node has no Hosting to ask.
+  hostingSiteUrl: process.env.HOSTING_SITE_URL ?? "",
   // Safeguards (CAP_* variables). The same for every member of the node.
   limits: limitsFromEnv(process.env),
   dataDir: root,
