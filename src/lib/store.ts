@@ -7,6 +7,7 @@
  */
 import fs from "node:fs";
 import { config, ensureDataDir } from "./config.js";
+import type { AuditEntry } from "./audit.js";
 import { decryptJson, encryptJson } from "./crypto.js";
 import type { Deployment, Member, Project, Session, User } from "../types.js";
 
@@ -16,6 +17,8 @@ export type Database = {
   deployments: Deployment[];
   sessions: Session[];
   members: Member[];
+  /** Who did what, newest first, kept thirty days. No addresses. */
+  audit: AuditEntry[];
 };
 
 const emptyDb: Database = {
@@ -24,6 +27,7 @@ const emptyDb: Database = {
   deployments: [],
   sessions: [],
   members: [],
+  audit: [],
 };
 
 // ── Read ───────────────────────────────────────────────────────────────────
@@ -35,6 +39,7 @@ export function loadDb(): Database {
   try {
     const db = decryptJson<Database>(config.appSecret, raw);
     db.members ??= [];
+    db.audit ??= [];
     for (const project of db.projects) {
       if (project.buildContext === undefined) project.buildContext = ".";
     }

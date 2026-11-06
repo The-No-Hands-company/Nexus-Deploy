@@ -42,7 +42,7 @@ function project(patch: Partial<Project> = {}): Project {
 }
 
 function seed(...projects: Project[]) {
-  store.saveDb({ users: [], projects, deployments: [], sessions: [], members: [] });
+  store.saveDb({ users: [], projects, deployments: [], sessions: [], members: [], audit: [] });
 }
 
 const projectOf = (id = "prj_1") => store.loadDb().projects.find((p) => p.id === id) as Project;
