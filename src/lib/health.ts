@@ -37,3 +37,17 @@ export async function waitForHealthy(opts: {
       : `app answered ${last} instead of a healthy status within ${Math.round(opts.timeoutMs / 1000)}s`,
   };
 }
+
+/** One HTTP probe of an app published on loopback. Null when nothing answers. */
+export async function probeLoopback(port: number, path: string, timeoutMs = 2_000): Promise<number | null> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    await response.body?.cancel();
+    return response.status;
+  } catch {
+    return null;
+  }
+}
