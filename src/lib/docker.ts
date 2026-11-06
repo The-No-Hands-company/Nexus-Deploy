@@ -124,75 +124,11 @@ export function spawnStreaming(
   };
 }
 
-// ── docker run ─────────────────────────────────────────────────────────────
-export async function dockerRun(opts: {
-  image: string;
-  name: string;
-  env: Record<string, string>;
-  domain: string;
-  port: number;
-  network: string;
-  onLine: LogLine;
-  volumes?: string[];       // ["host:container", ...]
-  memoryLimit?: string;     // e.g. "512m", "1g"
-  cpus?: string;            // e.g. "0.5", "2"
-}): Promise<string> {
-  const { image, name, env, domain, port, network, onLine, volumes = [], memoryLimit, cpus } = opts;
-
-  await spawnStream("docker", ["rm", "-f", name], () => {}).catch(() => {});
-
-  const envFlags   = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const volFlags   = volumes.flatMap(v => ["-v", v]);
-  const limitFlags = [
-    ...(memoryLimit ? ["--memory", memoryLimit] : []),
-    ...(cpus        ? ["--cpus",   cpus]        : []),
-  ];
-
-  const labels = [
-    `traefik.enable=true`,
-    `traefik.http.routers.${name}.rule=Host(\`${domain}\`)`,
-    `traefik.http.routers.${name}.tls=true`,
-    `traefik.http.routers.${name}.tls.certresolver=letsencrypt`,
-    `traefik.http.services.${name}.loadbalancer.server.port=${port}`,
-  ];
-  const labelFlags = labels.flatMap(l => ["-l", l]);
-
-  const args = [
-    "run", "-d",
-    "--name", name,
-    "--network", network,
-    "--restart", "unless-stopped",
-    ...envFlags,
-    ...volFlags,
-    ...limitFlags,
-    ...labelFlags,
-    image,
-  ];
-
-  let containerId = "";
-  await spawnStream("docker", args, line => {
-    containerId = line.trim();
-    onLine(`[nexus] Container started: ${line.trim().slice(0, 12)}`);
-  });
-  return containerId;
-}
-
 // ── docker stop / start / restart / remove ─────────────────────────────────
 export async function dockerStop(name: string)    { await spawnStream("docker", ["stop",    name], () => {}).catch(() => {}); }
 export async function dockerStart(name: string)   { await spawnStream("docker", ["start",   name], () => {}).catch(() => {}); }
 export async function dockerRestart(name: string) { await spawnStream("docker", ["restart", name], () => {}).catch(() => {}); }
 export async function dockerRemove(name: string)  { await spawnStream("docker", ["rm", "-f", name], () => {}).catch(() => {}); }
-
-// ── Where to reach a container from this process ──────────────────────────
-// On the host network the app listens on the host's loopback; on a bridge
-// network it has its own address on that network, reachable from the host.
-export async function dockerContainerHost(name: string, network: string): Promise<string | null> {
-  if (network === "host") return "127.0.0.1";
-  let out = "";
-  // spawnStream merges stderr into the lines, so only trust output on success.
-  return spawnStream("docker", ["inspect", "-f", `{{with index .NetworkSettings.Networks "${network}"}}{{.IPAddress}}{{end}}`, name], l => { out = l; })
-    .then(() => out.trim() || null, () => null);
-}
 
 /** Last lines of a container's output, for the deployment log when it fails. */
 export async function dockerLogTail(name: string, lines = 20): Promise<string[]> {

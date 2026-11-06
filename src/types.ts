@@ -51,7 +51,15 @@ export type Project = {
   domain?: string;
   customDomain?: string;
   containerId?: string;
+  /** Name of the container serving now. Releases are blue/green, so it changes on every release. */
+  containerName?: string;
+  /** Loopback port the serving container is published on. */
+  hostPort?: number;
+  /** Port reserved for a release in progress, so no other project picks it. */
+  pendingPort?: number;
   imageTag?: string;
+  /** The image the serving release replaced; kept so a rollback target survives pruning. */
+  previousImageTag?: string;
   webhookSecret?: string;
   memoryLimit?: string;
   cpus?: string;

@@ -1,21 +1,77 @@
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
-import { resolveBuildContext, resolveDockerfile, validateDockerfile } from "./build-context.js";
-export { resolveBuildContext } from "./build-context.js";
-import { spawnStream, spawnStreaming, dockerRun, dockerRemove, dockerStatus, dockerContainerHost, dockerLogTail } from "./docker.js";
-import { waitForHealthy, type HealthResult } from "./health.js";
-import { resolveRepoUrl } from "./repo.js";
-import { loadDb, writeDb, trimDeployments, capLogs, saveDb } from "./store.js";
+import path from "node:path";
 import { newId } from "./auth.js";
+import { resolveBuildContext, resolveDockerfile, validateDockerfile } from "./build-context.js";
+import { buildImage, cloneRepo, pullImage, type BuildOptions, type Track } from "./build-steps.js";
 import { config } from "./config.js";
+import { dockerReleaseRuntime } from "./docker-runtime.js";
 import { emitStatusChange } from "./events.js";
-import type { Project, Deployment, DeployTrigger } from "../types.js";
+import { evaluateBuildGuard } from "./guard.js";
+import { appHost, type PortRange } from "./hosts.js";
+import { allocatePort, loopbackPortFree, portsInUse } from "./ports.js";
+import { NullPublisher, type RoutePublisher } from "./publisher.js";
+import { performRelease, type ReleaseProject, type ReleaseRuntime } from "./release.js";
+import { containerLimits, diskFreePercent, type Limits, type Verdict } from "./safeguards.js";
+import { pinnedImageRef, redact, sourceOf } from "./source.js";
+import { capLogs, loadDb, saveDb, trimDeployments, writeDb } from "./store.js";
+import type { Deployment, DeployTrigger, GitSource, Project } from "../types.js";
 
-/** A release that started but never became healthy. runContainer has already
- *  recorded the outcome (and restored the previous image if it could), so the
- *  callers must not overwrite the statuses it set. */
-class ReleaseRejected extends Error {}
+export { resolveBuildContext } from "./build-context.js";
+
+type LogFn = (line: string) => void;
+
+/** Everything the pipeline does to the outside world, replaceable in tests. */
+export type DeploySteps = {
+  clone: (source: GitSource, dir: string, log: LogFn, track: Track) => Promise<void>;
+  buildImage: (opts: BuildOptions, log: LogFn, track: Track) => Promise<void>;
+  pullImage: (image: string, log: LogFn, timeoutMs: number) => Promise<string>;
+};
+
+export type DeployDeps = {
+  steps: DeploySteps;
+  runtime: ReleaseRuntime;
+  publisher: RoutePublisher;
+  limits: Limits;
+  baseDomain: string;
+  hostPattern: string;
+  portRange: PortRange;
+  isPortFree: (port: number) => Promise<boolean>;
+  health: { timeoutMs: number; intervalMs: number };
+  drainMs: number;
+  tmpDir: string;
+};
+
+// The ingress is told about live apps through this. The reference node installs
+// a publisher that registers routes with Nexus Cloud; until one is installed
+// nothing is announced, which is correct for a node with no ingress to tell.
+let routePublisher: RoutePublisher = new NullPublisher();
+export function setRoutePublisher(publisher: RoutePublisher): void {
+  routePublisher = publisher;
+}
+export function getRoutePublisher(): RoutePublisher {
+  return routePublisher;
+}
+
+export function defaultDeps(): DeployDeps {
+  return {
+    steps: {
+      clone: (source, dir, log, track) => cloneRepo(source, dir, config.allowLocalRepos, log, track),
+      buildImage,
+      pullImage,
+    },
+    runtime: dockerReleaseRuntime,
+    publisher: routePublisher,
+    limits: config.limits,
+    baseDomain: config.baseDomain,
+    hostPattern: config.appHostPattern,
+    portRange: config.appPortRange,
+    isPortFree: loopbackPortFree,
+    health: { timeoutMs: config.healthTimeoutMs, intervalMs: config.healthIntervalMs },
+    drainMs: 10_000,
+    tmpDir: os.tmpdir(),
+  };
+}
 
 // ── Log subscriber registry ────────────────────────────────────────────────
 type Subscriber = (line: string) => void;
@@ -23,20 +79,24 @@ const subscribers = new Map<string, Set<Subscriber>>();
 
 export function subscribeToDeployment(id: string, fn: Subscriber): () => void {
   if (!subscribers.has(id)) subscribers.set(id, new Set());
-  subscribers.get(id)!.add(fn);
-  return () => { subscribers.get(id)?.delete(fn); if (!subscribers.get(id)?.size) subscribers.delete(id); };
+  subscribers.get(id)?.add(fn);
+  return () => {
+    subscribers.get(id)?.delete(fn);
+    if (!subscribers.get(id)?.size) subscribers.delete(id);
+  };
 }
 
 function broadcast(id: string, line: string) {
-  subscribers.get(id)?.forEach(fn => fn(line));
+  subscribers.get(id)?.forEach((fn) => fn(line));
 }
 
 // ── Per-project build lock ─────────────────────────────────────────────────
 const buildingProjects = new Set<string>();
-export function isBuilding(projectId: string) { return buildingProjects.has(projectId); }
+export function isBuilding(projectId: string) {
+  return buildingProjects.has(projectId);
+}
 
 // ── Per-deployment cancel registry ────────────────────────────────────────
-// Stores a kill() fn for each active build so it can be cancelled
 const buildCancellers = new Map<string, () => void>();
 
 export async function cancelBuild(deploymentId: string): Promise<boolean> {
@@ -49,15 +109,15 @@ export async function cancelBuild(deploymentId: string): Promise<boolean> {
 // ── DB helpers ─────────────────────────────────────────────────────────────
 async function pushLog(depId: string, line: string) {
   broadcast(depId, line);
-  await writeDb(db => {
-    const dep = db.deployments.find(d => d.id === depId);
+  await writeDb((db) => {
+    const dep = db.deployments.find((d) => d.id === depId);
     if (dep) dep.logs = capLogs([...dep.logs, line]);
   });
 }
 
 async function setDepStatus(depId: string, status: Deployment["status"]) {
-  await writeDb(db => {
-    const dep = db.deployments.find(d => d.id === depId);
+  await writeDb((db) => {
+    const dep = db.deployments.find((d) => d.id === depId);
     if (dep) {
       dep.status = status;
       if (status === "live" || status === "failed" || status === "cancelled") dep.finishedAt = Date.now();
@@ -66,15 +126,37 @@ async function setDepStatus(depId: string, status: Deployment["status"]) {
 }
 
 async function setProjStatus(projectId: string, status: Project["status"], extra: Partial<Project> = {}) {
-  await writeDb(db => {
-    const p = db.projects.find(p => p.id === projectId);
+  await writeDb((db) => {
+    const p = db.projects.find((p) => p.id === projectId);
     if (p) Object.assign(p, { status, updatedAt: Date.now(), ...extra });
   });
   emitStatusChange(projectId, status);
 }
 
+// ── May this project build right now? ──────────────────────────────────────
+function lowestPercent(values: Array<number | null>): number | null {
+  const known = values.filter((v): v is number => v !== null);
+  return known.length ? Math.min(...known) : null;
+}
+
+export function guardBuild(project: Project, now: number = Date.now()): Verdict {
+  const sandboxFree = config.sandboxStoragePath ? diskFreePercent(config.sandboxStoragePath) : null;
+  return evaluateBuildGuard(
+    loadDb(),
+    project,
+    {
+      isBuilding,
+      hostFreePercent: lowestPercent([diskFreePercent(config.dataDir), diskFreePercent(os.tmpdir())]),
+      sandboxUsedPercent: sandboxFree === null ? null : 100 - sandboxFree,
+      now,
+    },
+    config.limits,
+  );
+}
+
 // ── Create deployment ──────────────────────────────────────────────────────
 export function createDeployment(project: Project, commitSha: string, triggeredBy: DeployTrigger = "manual"): Deployment {
+  const source = sourceOf(project);
   const dep: Deployment = {
     id: newId("dep"),
     projectId: project.id,
@@ -84,7 +166,7 @@ export function createDeployment(project: Project, commitSha: string, triggeredB
     imageTag: "",
     logs: [
       `[nexus] Deploy queued → ${project.name}`,
-      `[nexus] repo=${project.repo}  branch=${project.branch}`,
+      source.type === "git" ? `[nexus] repo=${source.repo}  branch=${source.branch}` : `[nexus] image=${source.image}`,
     ],
     createdAt: Date.now(),
   };
@@ -97,9 +179,7 @@ export function createDeployment(project: Project, commitSha: string, triggeredB
 // ── Notification webhook ───────────────────────────────────────────────────
 async function notify(project: Project, deployment: Deployment) {
   if (!project.notifyUrl) return;
-  const duration = deployment.finishedAt
-    ? Math.round((deployment.finishedAt - deployment.createdAt) / 1000)
-    : null;
+  const duration = deployment.finishedAt ? Math.round((deployment.finishedAt - deployment.createdAt) / 1000) : null;
   const body = {
     project: project.name,
     status: deployment.status,
@@ -121,199 +201,224 @@ async function notify(project: Project, deployment: Deployment) {
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
     });
-  } catch (e: any) {
-    console.warn(`[nexus] Notify failed for ${project.name}: ${e.message}`);
+  } catch (e) {
+    console.warn(`[nexus] Notify failed for ${project.name}: ${(e as Error).message}`);
   }
 }
 
+// ── Ports: one release at a time picks, and holds its pick ─────────────────
+let portChain: Promise<unknown> = Promise.resolve();
+function reservePort(projectId: string, deps: DeployDeps): Promise<number> {
+  const attempt = portChain.then(async () => {
+    const port = await allocatePort(deps.portRange, portsInUse(loadDb().projects), deps.isPortFree);
+    if (port === null) throw new Error("no free port is left in the app port range");
+    await writeDb((db) => {
+      const p = db.projects.find((p) => p.id === projectId);
+      if (p) p.pendingPort = port;
+    });
+    return port;
+  });
+  portChain = attempt.catch(() => {});
+  return attempt;
+}
+
+// ── Release: start the image, prove it, move the route ─────────────────────
+async function release(
+  snapshot: Project,
+  deploymentId: string,
+  imageRef: string,
+  deps: DeployDeps,
+  log: LogFn,
+): Promise<void> {
+  const project = loadDb().projects.find((p) => p.id === snapshot.id) ?? snapshot;
+  const host = appHost(project.name, deps.hostPattern, deps.baseDomain);
+  const hasVolume = Boolean(project.volumePath) && project.volumePath !== "/workspace";
+  const releaseProject: ReleaseProject = {
+    id: project.id,
+    slug: project.name,
+    host,
+    appPort: project.port ?? 3000,
+    healthPath: project.healthPath,
+    env: project.env,
+    limits: containerLimits(project, deps.limits),
+    volume: hasVolume ? { name: `nexus-vol-${project.name}`, path: project.volumePath } : undefined,
+    current:
+      project.containerName && project.hostPort !== undefined && project.imageTag
+        ? { containerName: project.containerName, imageRef: project.imageTag, hostPort: project.hostPort }
+        : undefined,
+  };
+
+  try {
+    const outcome = await performRelease(releaseProject, deploymentId, imageRef, {
+      runtime: deps.runtime,
+      publisher: deps.publisher,
+      allocatePort: () => reservePort(project.id, deps),
+      health: deps.health,
+      drainMs: deps.drainMs,
+      log,
+    });
+    if (outcome.ok) {
+      await setDepStatus(deploymentId, "live");
+      await setProjStatus(project.id, "live", {
+        containerName: outcome.containerName,
+        hostPort: outcome.hostPort,
+        imageTag: outcome.imageRef,
+        previousImageTag:
+          project.imageTag && project.imageTag !== outcome.imageRef ? project.imageTag : project.previousImageTag,
+        domain: host,
+      });
+      log(`[nexus] ✅ Live at https://${host}`);
+      return;
+    }
+    log(`[nexus] ✗ Release rejected: ${outcome.reason}`);
+    await setDepStatus(deploymentId, "failed");
+    if (outcome.servingPrevious) {
+      await setProjStatus(project.id, "live");
+    } else {
+      if (releaseProject.current) await deps.publisher.unpublish(project.name).catch(() => {});
+      await setProjStatus(project.id, "failed", { containerName: undefined, hostPort: undefined });
+    }
+  } finally {
+    await writeDb((db) => {
+      const p = db.projects.find((p) => p.id === project.id);
+      if (p) delete p.pendingPort;
+    });
+  }
+}
+
+/** A project that was serving keeps serving when a build fails before the release. */
+function wasServing(project: Project): boolean {
+  return project.status === "live" && Boolean(project.containerName);
+}
+
 // ── Full build pipeline ────────────────────────────────────────────────────
-export async function runDeploy(project: Project, deploymentId: string): Promise<void> {
+export async function runDeploy(
+  project: Project,
+  deploymentId: string,
+  deps: DeployDeps = defaultDeps(),
+): Promise<void> {
   if (buildingProjects.has(project.id)) {
     await pushLog(deploymentId, "[nexus] ✗ Another build is already running");
     await setDepStatus(deploymentId, "failed");
     return;
   }
   buildingProjects.add(project.id);
-  const buildDir = path.join(os.tmpdir(), `nexus-build-${deploymentId}`);
-  let cancelled = false;
 
-  // Register a cancel function
+  const source = sourceOf(project);
+  const secrets = [source.type === "git" ? source.token : undefined];
+  const emit = (line: string) => pushLog(deploymentId, redact(line, secrets));
+  const buildDir = path.join(deps.tmpDir, `nexus-build-${deploymentId}`);
+  const servedBefore = wasServing(project);
+  let cancelled = false;
+  let timedOut = false;
+
   const killFns: Array<() => void> = [];
+  const track: Track = (kill) => {
+    killFns.push(kill);
+  };
+  const stopSteps = () => {
+    for (const kill of killFns) kill();
+  };
   buildCancellers.set(deploymentId, () => {
     cancelled = true;
-    killFns.forEach(fn => fn());
+    stopSteps();
   });
+  const log: LogFn = (line) => {
+    if (!cancelled) void emit(line);
+  };
+  const assertActive = () => {
+    if (cancelled) throw new Error("cancelled");
+    if (timedOut) throw new Error("timed out");
+  };
+  let timer: NodeJS.Timeout | undefined;
 
   try {
-    const log = (line: string) => { if (!cancelled) pushLog(deploymentId, line); };
     await setDepStatus(deploymentId, "building");
     await setProjStatus(project.id, "building");
+    timer = setTimeout(() => {
+      timedOut = true;
+      stopSteps();
+    }, deps.limits.buildTimeoutMs);
 
-    // 1. Clone
-    log(`[nexus] Cloning ${project.repo} @ ${project.branch}…`);
-    fs.mkdirSync(buildDir, { recursive: true });
-    const repoUrl = resolveRepoUrl(project.repo, config.allowLocalRepos);
+    let imageRef: string;
+    if (source.type === "git") {
+      log(`[nexus] Cloning ${source.repo} @ ${source.branch}…`);
+      fs.mkdirSync(buildDir, { recursive: true });
+      await deps.steps.clone(source, buildDir, log, track);
+      assertActive();
+      log("[nexus] ✓ Clone complete");
 
-    await new Promise<void>((resolve, reject) => {
-      const kill = spawnStreaming("git", ["clone", "--depth", "1", "--branch", project.branch, repoUrl, buildDir], log,
-        err => { if (cancelled) resolve(); else if (err) reject(err); else resolve(); });
-      killFns.push(kill);
-    });
-    if (cancelled) throw new Error("cancelled");
-    log(`[nexus] ✓ Clone complete`);
-
-    // 2. Build image
-    const imageTag = `nexus/${project.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}:${deploymentId.slice(-8)}`;
-    const contextDir = resolveBuildContext(buildDir, project.buildContext);
-    const dockerfile = resolveDockerfile(buildDir, validateDockerfile(project.dockerfile, project.buildContext ?? "."));
-    log(`[nexus] Building with ${dockerfile ? "Docker" : "Nixpacks"} → ${imageTag}`);
-
-    await new Promise<void>((resolve, reject) => {
-      const cmd = dockerfile ? "docker" : "nixpacks";
-      const args = dockerfile ? ["build", "-t", imageTag, "-f", dockerfile, contextDir] : ["build", contextDir, "--name", imageTag];
-      const kill = spawnStreaming(cmd, args, log,
-        err => { if (cancelled) resolve(); else if (err) reject(err); else resolve(); });
-      killFns.push(kill);
-    });
-    if (cancelled) throw new Error("cancelled");
-    log(`[nexus] ✓ Image built`);
-
-    await writeDb(db => { const d = db.deployments.find(d => d.id === deploymentId); if (d) d.imageTag = imageTag; });
-    await runContainer(project, deploymentId, imageTag, log);
-
-  } catch (err: any) {
-    if (err instanceof ReleaseRejected) {
-      await pushLog(deploymentId, `[nexus] ✗ Release rejected: ${err.message}`);
-    } else if (cancelled || err?.message === "cancelled") {
-      await pushLog(deploymentId, `[nexus] ✗ Build cancelled`);
-      await setDepStatus(deploymentId, "cancelled");
-      await setProjStatus(project.id, "failed");
+      const tag = `nexus/${project.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}:${deploymentId.slice(-8)}`;
+      const contextDir = resolveBuildContext(buildDir, project.buildContext);
+      const dockerfile = resolveDockerfile(buildDir, validateDockerfile(project.dockerfile, project.buildContext ?? "."));
+      log(`[nexus] Building with ${dockerfile ? "Docker" : "Nixpacks"} → ${tag}`);
+      await deps.steps.buildImage({ contextDir, dockerfile, tag }, log, track);
+      assertActive();
+      log("[nexus] ✓ Image built");
+      imageRef = tag;
     } else {
-      await pushLog(deploymentId, `[nexus] ✗ Build failed: ${err?.message ?? String(err)}`);
-      await setDepStatus(deploymentId, "failed");
-      await setProjStatus(project.id, "failed");
+      log(`[nexus] Pulling ${source.image}…`);
+      const digest = await deps.steps.pullImage(source.image, log, deps.limits.pullTimeoutMs);
+      assertActive();
+      imageRef = pinnedImageRef(source.image, digest);
+      log(`[nexus] ✓ Pulled ${imageRef}`);
     }
+    clearTimeout(timer);
+
+    await writeDb((db) => {
+      const d = db.deployments.find((d) => d.id === deploymentId);
+      if (d) d.imageTag = imageRef;
+    });
+    await release(project, deploymentId, imageRef, deps, log);
+  } catch (err) {
+    const message = (err as Error)?.message ?? String(err);
+    let status: Deployment["status"] = "failed";
+    if (cancelled || message === "cancelled") {
+      status = "cancelled";
+      await emit("[nexus] ✗ Build cancelled");
+    } else if (timedOut) {
+      await emit(`[nexus] ✗ Build exceeded ${Math.round(deps.limits.buildTimeoutMs / 60_000)} minutes and was stopped`);
+    } else {
+      await emit(`[nexus] ✗ Build failed: ${message}`);
+    }
+    await setDepStatus(deploymentId, status);
+    await setProjStatus(project.id, servedBefore ? "live" : "failed");
   } finally {
+    if (timer) clearTimeout(timer);
     buildCancellers.delete(deploymentId);
     buildingProjects.delete(project.id);
     fs.rmSync(buildDir, { recursive: true, force: true });
     trimDeployments(project.id).catch(() => {});
-    // Send notification
-    const dep = loadDb().deployments.find(d => d.id === deploymentId);
+    const dep = loadDb().deployments.find((d) => d.id === deploymentId);
     if (dep) notify(project, dep).catch(() => {});
   }
 }
 
 // ── Rollback ───────────────────────────────────────────────────────────────
-export async function runRollback(project: Project, deploymentId: string, imageTag: string): Promise<void> {
+export async function runRollback(
+  project: Project,
+  deploymentId: string,
+  imageRef: string,
+  deps: DeployDeps = defaultDeps(),
+): Promise<void> {
   if (buildingProjects.has(project.id)) return;
   buildingProjects.add(project.id);
+  const servedBefore = wasServing(project);
   try {
-    const log = (line: string) => pushLog(deploymentId, line);
+    const log: LogFn = (line) => {
+      void pushLog(deploymentId, line);
+    };
     await setDepStatus(deploymentId, "building");
     await setProjStatus(project.id, "building");
-    log(`[nexus] Rolling back → ${imageTag}`);
-    await runContainer(project, deploymentId, imageTag, log);
-  } catch (err: any) {
-    await pushLog(deploymentId, `[nexus] ✗ Rollback failed: ${err?.message}`);
-    if (!(err instanceof ReleaseRejected)) {
-      await setDepStatus(deploymentId, "failed");
-      await setProjStatus(project.id, "failed");
-    }
+    log(`[nexus] Rolling back → ${imageRef}`);
+    await release(project, deploymentId, imageRef, deps, log);
+  } catch (err) {
+    await pushLog(deploymentId, `[nexus] ✗ Rollback failed: ${(err as Error)?.message}`);
+    await setDepStatus(deploymentId, "failed");
+    await setProjStatus(project.id, servedBefore ? "live" : "failed");
   } finally {
     buildingProjects.delete(project.id);
-    const dep = loadDb().deployments.find(d => d.id === deploymentId);
+    const dep = loadDb().deployments.find((d) => d.id === deploymentId);
     if (dep) notify(project, dep).catch(() => {});
   }
-}
-
-// ── Shared: start container, then prove it serves ──────────────────────────
-// "live" is a claim that the app answers, so it is only recorded after the
-// health probe passes. A release that never becomes healthy is rejected and
-// the image that was live before it is started again, so a bad release costs
-// a short outage instead of leaving the app down. (The old container is
-// replaced in place; zero-downtime blue/green would need a second port.)
-async function runContainer(snapshot: Project, deploymentId: string, imageTag: string, log: (l: string) => void) {
-  const project = loadDb().projects.find(p => p.id === snapshot.id) ?? snapshot;
-  // imageTag on the project is only ever written when a release passed its probe.
-  const previousImage = project.imageTag && project.imageTag !== imageTag ? project.imageTag : undefined;
-  const domain = project.customDomain ?? `${project.name}.${config.baseDomain}`;
-
-  log(`[nexus] Starting container → https://${domain}`);
-  const containerId = await startContainer(project, imageTag, domain, log);
-  const health = await checkHealth(project, log);
-  if (health.ok) {
-    log(`[nexus] ✅ Live at https://${domain}`);
-    await setDepStatus(deploymentId, "live");
-    await setProjStatus(project.id, "live", { containerId, domain, imageTag });
-    return;
-  }
-
-  log(`[nexus] ✗ Health check failed: ${health.reason}`);
-  for (const line of await dockerLogTail(containerName(project))) log(`[app] ${line}`);
-  await setDepStatus(deploymentId, "failed");
-
-  if (previousImage) {
-    log(`[nexus] Restoring previous release → ${previousImage}`);
-    const restoredId = await startContainer(project, previousImage, domain, log);
-    const restored = await checkHealth(project, log);
-    if (restored.ok) {
-      log(`[nexus] ✓ Previous release is serving again`);
-      await setProjStatus(project.id, "live", { containerId: restoredId, domain, imageTag: previousImage });
-      throw new ReleaseRejected(health.reason);
-    }
-    log(`[nexus] ✗ Previous release is unhealthy too: ${restored.reason}`);
-  }
-  // Nothing healthy to serve: stop the crash loop rather than leave it restarting.
-  await dockerRemove(containerName(project));
-  await setProjStatus(project.id, "failed");
-  throw new ReleaseRejected(health.reason);
-}
-
-function containerName(project: Project) {
-  return `nexus-app-${project.name}`;
-}
-
-function startContainer(project: Project, imageTag: string, domain: string, log: (l: string) => void) {
-  const env: Record<string, string> = { PORT: String(project.port ?? 3000), NODE_ENV: "production", ...project.env };
-  // Named volume for persistence across redeploys
-  const volumes: string[] = [];
-  if (project.volumePath && project.volumePath !== "/workspace") {
-    volumes.push(`nexus-vol-${project.name}:${project.volumePath}`);
-  }
-  return dockerRun({
-    image: imageTag,
-    name: containerName(project),
-    env,
-    domain,
-    port: project.port ?? 3000,
-    network: config.dockerNetwork,
-    onLine: log,
-    volumes,
-    memoryLimit: project.memoryLimit || undefined,
-    cpus: project.cpus || undefined,
-  });
-}
-
-async function checkHealth(project: Project, log: (l: string) => void): Promise<HealthResult> {
-  const name = containerName(project);
-  const healthPath = project.healthPath || "/";
-  log(`[nexus] Waiting for ${healthPath} to answer (up to ${Math.round(config.healthTimeoutMs / 1000)}s)…`);
-  return waitForHealthy({
-    requireOk: Boolean(project.healthPath),
-    timeoutMs: config.healthTimeoutMs,
-    intervalMs: config.healthIntervalMs,
-    // A crash-looping container under --restart flips through "restarting".
-    isRunning: async () => ["running", "created"].includes(await dockerStatus(name)),
-    probe: async () => {
-      const host = await dockerContainerHost(name, config.dockerNetwork);
-      if (!host) return null;
-      const response = await fetch(`http://${host}:${project.port ?? 3000}${healthPath}`, {
-        redirect: "manual",
-        signal: AbortSignal.timeout(2_000),
-      });
-      await response.body?.cancel();
-      return response.status;
-    },
-  });
 }
