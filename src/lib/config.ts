@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parsePortRange } from "./hosts.js";
+import { limitsFromEnv } from "./safeguards.js";
 
 // Default the data root somewhere the running user can actually write.
 //
@@ -35,6 +36,8 @@ export const config = {
   // Mount point of the sandbox's size-capped storage. Builds are refused when it,
   // or the data directory's volume, is nearly full.
   sandboxStoragePath: process.env.SANDBOX_STORAGE_PATH ?? "",
+  // Safeguards (CAP_* variables). The same for every member of the node.
+  limits: limitsFromEnv(process.env),
   dataDir: root,
   dbPath: path.join(root, "nexus-deploy.json"),
   appSecret: process.env.APP_SECRET ?? "change-me",
