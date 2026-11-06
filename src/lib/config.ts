@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parsePortRange } from "./hosts.js";
 
 // Default the data root somewhere the running user can actually write.
 //
@@ -15,10 +16,25 @@ import path from "node:path";
 const root =
   process.env.DATA_DIR ?? path.join(os.homedir(), "nexus-workspace", "deploy");
 
+const baseDomain = process.env.BASE_DOMAIN ?? "localhost";
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   baseUrl: process.env.BASE_URL ?? "http://localhost:3000",
-  baseDomain: process.env.BASE_DOMAIN ?? "localhost",
+  baseDomain,
+  // Where the dashboard, the API and the short links (<controlHost>/<slug>) live.
+  controlHost: process.env.CONTROL_HOST ?? `deploy.${baseDomain}`,
+  // Where one app is reachable. `{slug}` and `{BASE_DOMAIN}` are substituted.
+  appHostPattern: process.env.APP_HOST_PATTERN ?? "{slug}.{BASE_DOMAIN}",
+  // Loopback ports apps are published on. The ingress reaches an app only here.
+  appPortRange: parsePortRange(process.env.APP_PORT_RANGE ?? "20000-29999"),
+  // The rootless sandbox daemon, e.g. unix:///run/user/1001/docker.sock. Empty
+  // means "not configured": every Docker call then refuses to run, so a
+  // misconfigured node can never fall back to the host's own daemon.
+  sandboxDockerHost: process.env.SANDBOX_DOCKER_HOST ?? "",
+  // Mount point of the sandbox's size-capped storage. Builds are refused when it,
+  // or the data directory's volume, is nearly full.
+  sandboxStoragePath: process.env.SANDBOX_STORAGE_PATH ?? "",
   dataDir: root,
   dbPath: path.join(root, "nexus-deploy.json"),
   appSecret: process.env.APP_SECRET ?? "change-me",
