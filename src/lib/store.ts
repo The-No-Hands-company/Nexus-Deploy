@@ -8,13 +8,14 @@
 import fs from "node:fs";
 import { config, ensureDataDir } from "./config.js";
 import { decryptJson, encryptJson } from "./crypto.js";
-import type { Deployment, Project, Session, User } from "../types.js";
+import type { Deployment, Member, Project, Session, User } from "../types.js";
 
 export type Database = {
   users: User[];
   projects: Project[];
   deployments: Deployment[];
   sessions: Session[];
+  members: Member[];
 };
 
 const emptyDb: Database = {
@@ -22,6 +23,7 @@ const emptyDb: Database = {
   projects: [],
   deployments: [],
   sessions: [],
+  members: [],
 };
 
 // ── Read ───────────────────────────────────────────────────────────────────
@@ -32,6 +34,7 @@ export function loadDb(): Database {
   if (!raw.trim()) return structuredClone(emptyDb);
   try {
     const db = decryptJson<Database>(config.appSecret, raw);
+    db.members ??= [];
     for (const project of db.projects) {
       if (project.buildContext === undefined) project.buildContext = ".";
     }

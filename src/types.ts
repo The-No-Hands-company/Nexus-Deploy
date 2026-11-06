@@ -8,10 +8,25 @@ export type User = {
   createdAt: number;
 };
 
+export type MemberRole = "owner" | "member";
+export type MemberStatus = "active" | "suspended";
+
+/** Someone an operator has let use this node's Deploy. Identity itself lives in Nexus-Auth. */
+export type Member = {
+  authUserId: string;
+  role: MemberRole;
+  status: MemberStatus;
+  grantedBy: string;
+  grantedAt: number;
+  label?: string;
+};
+
 export type ProjectStatus = "idle" | "building" | "live" | "failed" | "stopped";
 
 export type Project = {
   id: string;
+  /** Nexus-Auth id of the member who owns it. Absent only on projects from before ownership existed. */
+  ownerId?: string;
   name: string;
   repo: string;
   branch: string;
