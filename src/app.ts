@@ -5,8 +5,10 @@ import helmet from "helmet";
 import { aiRoutes } from "./routes/ai.js";
 import { basicRoutes } from "./routes/basic.js";
 import { makeContext } from "./routes/context.js";
+import { lifecycleRoutes } from "./routes/lifecycle.js";
 import { projectRoutes } from "./routes/projects.js";
 import type { AppDeps } from "./routes/types.js";
+import { webhookRoutes } from "./routes/webhook.js";
 
 export type { AppDeps } from "./routes/types.js";
 
@@ -22,12 +24,17 @@ export function createApp(deps: AppDeps): express.Express {
 
   const ctx = makeContext(deps);
 
+  // The webhook verifies a signature over the raw bytes, so it is registered
+  // before the JSON parser, which would consume them.
+  webhookRoutes(app, ctx);
+
   app.use(express.json({ limit: "1mb" }));
 
   const api = express.Router();
   basicRoutes(api, ctx);
   aiRoutes(api, ctx);
   projectRoutes(api, ctx);
+  lifecycleRoutes(api, ctx);
   app.use(api);
 
   // An unknown API path is a JSON 404, never the dashboard's HTML.

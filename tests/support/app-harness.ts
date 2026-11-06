@@ -25,6 +25,7 @@ process.env["SANDBOX_DOCKER_HOST"] = "unix:///does-not-exist.sock";
 
 export const store = await import("../../src/lib/store.js");
 const { createApp } = await import("../../src/app.js");
+const { attachSockets } = await import("../../src/lib/ws.js");
 
 export const IDENTITIES: Record<string, NexusIdentity> = {
   "t-boss": { id: "boss", role: "founder", username: "boss" },
@@ -39,6 +40,50 @@ export const fakeAuth: Authenticator = async (token) => {
   const identity = IDENTITIES[token];
   return identity ? { kind: "ok", identity } : { kind: "denied" };
 };
+
+/** Insert a project directly, for tests that start from a project in a given state. */
+export function addProject(patch: Partial<import("../../src/types.js").Project> = {}) {
+  const project = {
+    id: `prj_${Math.random().toString(36).slice(2, 10)}`,
+    ownerId: "ada",
+    name: "demo",
+    repo: "o/r",
+    branch: "main",
+    buildContext: ".",
+    buildCommand: "",
+    startCommand: "",
+    volumePath: "/workspace",
+    port: 3000,
+    env: {},
+    status: "idle",
+    autoDeployEnabled: true,
+    webhookSecret: "whsec_test_secret",
+    createdAt: 1,
+    updatedAt: 1,
+    ...patch,
+  } as import("../../src/types.js").Project;
+  const db = store.loadDb();
+  db.projects.unshift(project);
+  store.saveDb(db);
+  return project;
+}
+
+export function addDeployment(patch: Partial<import("../../src/types.js").Deployment> & { projectId: string }) {
+  const dep = {
+    id: `dep_${Math.random().toString(36).slice(2, 12)}`,
+    commitSha: "abc12345",
+    triggeredBy: "manual",
+    status: "live",
+    imageTag: "nexus/demo:old",
+    logs: ["[nexus] hello"],
+    createdAt: 1,
+    ...patch,
+  } as import("../../src/types.js").Deployment;
+  const db = store.loadDb();
+  db.deployments.unshift(dep);
+  store.saveDb(db);
+  return dep;
+}
 
 export function resetDb(): void {
   store.saveDb({ users: [], projects: [], deployments: [], sessions: [], members: [], audit: [] });
@@ -148,6 +193,7 @@ export async function startHarness(patch: Partial<AppDeps> = {}) {
     ...patch,
   };
   const server: Server = createApp(deps).listen(0, "127.0.0.1");
+  attachSockets(server, deps);
   await once(server, "listening");
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 

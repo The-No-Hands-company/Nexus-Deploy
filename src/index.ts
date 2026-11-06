@@ -3,10 +3,12 @@ import { createApp } from "./app.js";
 import { config, ensureDataDir } from "./lib/config.js";
 import { startStatusSync } from "./lib/status-sync.js";
 import { realDeps } from "./lib/wiring.js";
+import { attachSockets } from "./lib/ws.js";
 
 ensureDataDir();
 const deps = realDeps();
 const server = createServer(createApp(deps));
+attachSockets(server, deps);
 
 startStatusSync(30_000);
 
