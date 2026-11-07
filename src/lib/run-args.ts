@@ -33,6 +33,41 @@ export function validateVolumePath(path: unknown): string {
   return path;
 }
 
+/**
+ * The flags that make a container safe to run a stranger's code: no capabilities
+ * and no way to gain any, hard CPU, memory and process caps, and capped logs. A
+ * function of its own so `doctor` proves the sandbox with the very flags real
+ * containers get, not a copy that could drift.
+ */
+export function isolationArgs(limits: ContainerLimits): string[] {
+  return [
+    // No capabilities, and no way to acquire any (setuid binaries included).
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    String(limits.pids),
+    // Swap equal to memory means no swap at all.
+    "--memory",
+    limits.memory,
+    "--memory-swap",
+    limits.memory,
+    "--cpus",
+    limits.cpus,
+    // Docker's default driver keeps logs forever. These are capped, and the
+    // charter promises we keep nothing longer than we need.
+    "--log-driver",
+    "local",
+    "--log-opt",
+    "max-size=10m",
+    "--log-opt",
+    "max-file=2",
+    "--log-opt",
+    "compress=false",
+  ];
+}
+
 export function buildRunArgs(spec: RunSpec): string[] {
   if (!NAME_RE.test(spec.name)) throw new Error(`unsafe container name: ${spec.name}`);
   if (spec.volume) {
@@ -47,30 +82,7 @@ export function buildRunArgs(spec: RunSpec): string[] {
     spec.name,
     "--restart",
     "unless-stopped",
-    // No capabilities, and no way to acquire any (setuid binaries included).
-    "--cap-drop",
-    "ALL",
-    "--security-opt",
-    "no-new-privileges",
-    "--pids-limit",
-    String(spec.limits.pids),
-    // Swap equal to memory means no swap at all.
-    "--memory",
-    spec.limits.memory,
-    "--memory-swap",
-    spec.limits.memory,
-    "--cpus",
-    spec.limits.cpus,
-    // Docker's default driver keeps logs forever. These are capped, and the
-    // charter promises we keep nothing longer than we need.
-    "--log-driver",
-    "local",
-    "--log-opt",
-    "max-size=10m",
-    "--log-opt",
-    "max-file=2",
-    "--log-opt",
-    "compress=false",
+    ...isolationArgs(spec.limits),
     // Reachable from the ingress on loopback only; never on a public interface.
     "-p",
     `127.0.0.1:${spec.hostPort}:${spec.appPort}`,

@@ -12,6 +12,7 @@
     "build:server": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "node --import tsx --test tests/*.test.ts",
+    "doctor": "node --import tsx src/doctor.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "lint": "biome check src web/src",
