@@ -10,170 +10,81 @@ Deploy a Git repository or a container image and get a live HTTPS app. A free, o
 
 **Free. Always. No exceptions.** Nexus Deploy is part of [The No Hands Company](https://github.com/The-No-Hands-company)'s promise that nothing it makes is sold or put behind a paywall. The software contains no billing or plans. Safeguards that protect a shared node (CPU, memory and build limits) apply equally to everyone and are shown in the dashboard. Anyone running their own node may charge for it; the licence allows that.
 
-Nexus Deploy is and will always be 100% free. The No Hands Company does not bill users for any of its products. [Donations welcome](https://github.com/The-No-Hands-company) — never required.
-
 ---
 
-## ✨ Features
+## ✨ Features (v0.6 Foundation)
 
 | Feature | Details |
 |---|---|
-| **Push-to-deploy** | GitHub webhooks trigger builds on every push |
-| **Auto-detect runtime** | Nixpacks for Node/Python/Go/Ruby; falls back to Dockerfile if present |
-| **Automatic HTTPS** | Traefik + Let's Encrypt, zero config |
-| **Live log streaming** | Watch builds and containers stream in real time via WebSocket |
-| **Rollback** | Re-deploy any previous image with one click |
-| **Env vars** | Encrypted at rest (AES-256-GCM), injected at runtime |
-| **Status sync** | Background job corrects DB when containers crash or restart |
-| **Build lock** | Prevents concurrent builds on the same project |
-| **No vendor lock-in** | Runs on any VPS with Docker. Owns your data. |
+| **Git & OCI Image sources** | Deploy any public or private Git repository (via askpass token) or any OCI container image |
+| **Auto-detect runtime** | [Railpack](https://railpack.com) (`v0.43.0`) builds Node, Python, Go, Rust, etc. via rootless BuildKit; uses `Dockerfile` when present |
+| **Blue/green releases** | Starts the new container on a free loopback port, probes health, switches the live route, and drains the old container with zero downtime |
+| **Rootless sandbox daemon** | Runs builds and containers inside a dedicated unprivileged user's rootless Docker daemon on a size-capped XFS loop filesystem |
+| **Container hardening** | Drops all Linux capabilities (`--cap-drop ALL`), sets `no-new-privileges`, enforces memory/CPU/PID caps, blocks host loopback/LAN egress, and caps container logs at 20 MB |
+| **Zero visitor tracking** | Edge proxy strips visitor IPs, cookies, credentials, and client tags before requests reach deployed apps |
+| **Instant rollback** | Re-deploy any previous image or pinned `@sha256` digest with one click |
+| **Data ownership** | Export portable project JSON (`GET /api/projects/:id/export`), delete individual build logs, or delete a project and every artifact it created |
 
 ---
-
-## 📌 Status of this release (v0.6)
-
-This release turns Nexus Deploy into something a node can share between invited members, safely. It adds members and per-user ownership, two kinds of source (Git and Docker image), private repositories, blue/green releases, safeguards, a sandboxed Docker daemon requirement and a route-publishing interface. Three things come in following releases: the sandbox **setup script**, the **ingress integration** that makes apps reachable (the reference node uses the Nexus ecosystem proxy and Cloud's registry), and the **conformance check** (`doctor` / `verify`). Until then the Traefik-and-Let's-Encrypt compose file below is **not supported**: app containers are no longer labelled for Traefik.
 
 ## 🏗️ Architecture
 
 ```
-GitHub push
-  ↓ POST /api/webhooks/github/:projectId  (HMAC verified)
-Nexus Deploy API  (Express + TypeScript + WebSocket)
-  ↓ git clone → nixpacks build / docker build
-Docker image
-  ↓ docker run --network nexus-net
-Traefik  (auto SSL + subdomain routing)
+Git push (HMAC webhook) or Manual / Image deploy
   ↓
-https://your-app.deploy.yourdomain.com
+Nexus Deploy Control Plane (Express + TypeScript + WebSocket/SSE)
+  ↓ SANDBOX_DOCKER_HOST (never the host daemon)
+Rootless Docker Sandbox (dedicated user, size-capped XFS loop image, nftables egress filter)
+  ├─ Builder: Dockerfile or Railpack v0.43.0 (BuildKit frontend)
+  └─ Runtime: 127.0.0.1:<port in 20000-29999> (--cap-drop ALL, 512 MB, 0.5 CPU, 256 PIDs, 10m×2 logs)
+  ↓ Health probe passes
+Nexus Cloud Route Registry (/api/v1/user-apps/:slug, userDeployed=true)
+  ↓
+Ecosystem Reverse Proxy (cookie/credential/IP/tag isolation + deploy.<domain>/<slug> short link)
+  ↓
+https://<slug>.<base-domain>
 ```
-
-**Stack:** Node.js · TypeScript · Express · WebSocket · AES-GCM encrypted JSON DB · React · Vite · Traefik
 
 ---
 
-## 🚀 Self-Host in 5 Minutes
+## 🚀 Node Bring-Up
 
-### Prerequisites
-- VPS or server with Docker + Docker Compose installed
-- Domain pointed at your server (`A` record for `*.deploy.yourdomain.com` and `deploy.yourdomain.com`)
-- Port 80 and 443 open
-
-### 1. Clone
+### 1. Provision the rootless sandbox (requires `sudo` once)
 
 ```bash
-git clone https://github.com/The-No-Hands-company/Nexus-Deploy
-cd Nexus-Deploy
-cp .env.example .env
+sudo bash sandbox/setup.sh --deploy-user "$USER"
 ```
 
-### 2. Configure
+This creates the unprivileged `nexus-deploy` user, allocates a size-capped XFS loop image (`/var/lib/nexus-deploy-sandbox.img`), starts the rootless Docker daemon with `local` log caps (`10m` × 2 files), grants your service user group access to its socket, and installs the `nftables` host-loopback/LAN egress filter.
 
-Edit `.env`:
-
-```env
-BASE_URL=https://deploy.yourdomain.com
-BASE_DOMAIN=deploy.yourdomain.com
-ACME_EMAIL=you@youremail.com
-
-# Generate with: openssl rand -hex 32
-JWT_SECRET=your_random_64_char_string
-APP_SECRET=another_random_64_char_string
-
-ADMIN_EMAIL=you@yourdomain.com
-ADMIN_PASSWORD=choose_a_strong_password
-```
-
-### 3. Install Nixpacks (on the host)
+### 2. Install the Railpack builder
 
 ```bash
-curl -sSL https://nixpacks.com/install.sh | bash
+bash sandbox/install-builder.sh
 ```
 
-> Nixpacks auto-detects your app's runtime — Node, Python, Go, Ruby, etc. If your repo has a `Dockerfile`, that's used instead.
+Installs pinned `railpack v0.43.0` (SHA-256 verified) to `~/.local/bin/railpack`.
 
-### 4. Launch
-
-```bash
-docker compose up -d
-```
-
-Dashboard is live at `https://deploy.yourdomain.com` once DNS propagates and SSL issues. ✅
-
----
-
-## 📖 Usage
-
-### Create a project
-
-1. Open the dashboard → **New project**
-2. Enter your GitHub repo (e.g. `owner/repo` or full HTTPS URL)
-3. Set branch, port your app listens on, env vars
-4. Click **Deploy**
-
-### Set up auto-deploy (GitHub webhook)
-
-1. In the dashboard → your project → **⚡ Webhook** tab
-2. Copy the **Payload URL** and **Secret**
-3. Go to your GitHub repo → **Settings → Webhooks → Add webhook**
-   - Payload URL: paste it
-   - Content type: `application/json`
-   - Secret: paste it
-   - Events: **Just the push event**
-4. Done — every `git push` now auto-deploys 🎉
-
-### Rollback
-
-In the **Overview** tab, every successful deployment has a **↩** button. Click it to instantly re-run that image — no rebuild needed.
-
-### Environment variables
-
-**⚙ Environment** tab — add key/value pairs, click Save. Redeploy to apply.
-
----
-
-## 🗺️ Roadmap
-
-- [x] v0.1 — Core scaffold, auth, projects, deployments, basic dashboard
-- [x] v0.2 — Real build engine (Nixpacks + Docker), WebSocket logs, rollback, webhook panel, status sync, activity feed, write-safe store, build lock
-- [ ] v0.3 — Custom domains, deploy previews, health checks with alerting
-- [ ] v0.4 — Multi-user teams, deploy hooks, scheduled deploys
-- [ ] v0.5 — Federation with Nexus Hosting nodes
-
----
-
-## 🛠️ Local Development
+### 3. Build and check readiness
 
 ```bash
-# Install
 npm install
 npm --prefix web install
-
-# Dev (tsx watch + vite HMR)
-npm run dev
-
-# Build
 npm run build
-
-# Type check
-npm run typecheck
+./check.sh
+npm run doctor
 ```
 
-The app stores data in `DATA_DIR` (default `/workspace`). In dev it creates `./workspace`.
+### 4. Run end-to-end conformance verification
 
----
-
-## 🤝 Part of the Nexus Ecosystem
-
-- **[Nexus Hosting](https://github.com/The-No-Hands-company)** — Federated website hosting
-- **Nexus Deploy** — Self-hosted deployment engine ← you are here
+```bash
+SANDBOX_DOCKER_HOST="unix:///run/user/$(id -u nexus-deploy)/docker.sock" \
+SANDBOX_STORAGE_PATH="/var/lib/nexus-deploy-sandbox" \
+npm run verify
+```
 
 ---
 
 ## 📄 License
 
-[GNU AGPL-3.0](LICENSE). Fork it, change it, run it; if you offer a changed version to others as a service, share your changes too. (This file used to say MIT, which was wrong: the repository has always carried the AGPL.)
-
----
-
-*Built with ❤️ by The No Hands Company. No hands. All heart.*
+[GNU AGPL-3.0](LICENSE). Fork it, change it, run it; if you offer a changed version to others as a service, share your changes too.

@@ -1,110 +1,110 @@
 # Nexus Deploy — Agent Guide
 
 ## Purpose
-A free, open-source alternative to paid deployment platforms (Railway, Render) by The No Hands Company. Deploy a Git repo or a container image and get a live HTTPS app. A general service for anyone: no Nexus app is special to it.
+A free, open-source alternative to paid deployment platforms (Railway, Render) by The No Hands Company. Deploy a Git repository or a container image and get a live HTTPS app. A general service for anyone: no Nexus app is special to it.
 
-## Architecture
+## Architecture (v0.6)
 ```
-GitHub push
-  → POST /api/webhooks/github/:projectId   (HMAC verified, per-project secret)
-  → createDeployment()                      (sync write to DB, returns ID)
-  → runDeploy()                             (async, fire-and-forget)
-      git clone
-      → nixpacks build  OR  docker build (if Dockerfile present)
-      → docker run (Traefik labels, volume mounts, resource limits)
+GitHub push / manual deploy
+  → POST /api/webhooks/github/:projectId (HMAC verified) or POST /api/projects/:id/deploy
+  → createDeployment()                      (writes queued deployment to encrypted store)
+  → runDeploy()                             (async pipeline in src/lib/build.ts)
+      Git source:   git clone (askpass for private repos)
+                    → Dockerfile build OR Railpack (buildkit frontend, zero privileged containers)
+      Image source: docker pull → pinned @sha256 digest
+  → runRelease()                            (src/lib/release.ts)
+      → allocate free loopback port in APP_PORT_RANGE (default 20000-29999)
+      → docker run on SANDBOX_DOCKER_HOST (rootless, --cap-drop ALL, no-new-privileges, resource & log caps)
+      → HTTP health probe on 127.0.0.1:<hostPort><healthPath>
+      → publish route to Nexus Cloud (/api/v1/user-apps/:slug with userDeployed=true)
+      → blue/green drain & stop previous container (or stop-then-start when volumePath is set)
   → WebSocket /api/log-stream               (build log streaming per deploymentId)
   → WebSocket /api/container-stream         (runtime stdout/stderr streaming)
-  → SSE        /api/events?token=           (instant project status updates)
-  → status-sync (30s poll Docker, corrects DB, emits SSE events)
-  → image-prune (hourly, removes unused nexus/* images)
+  → SSE       /api/events                   (project status updates for the caller's projects)
+  → status-sync (30s poll sandbox Docker, corrects DB, emits SSE events)
+  → image-prune (hourly, removes unreferenced images in the dedicated sandbox daemon)
 ```
 
 ## Key files
 | File | Purpose |
 |---|---|
-| `src/index.ts` | Express server, all routes, WS, SSE, boot |
-| `src/lib/build.ts` | Clone → build → run → log pipeline |
-| `src/lib/docker.ts` | Docker CLI: run/stop/start/restart/remove/status/stats/logs |
-| `src/lib/status-sync.ts` | Background Docker status reconciliation + image pruning |
-| `src/lib/events.ts` | In-process SSE event bus (decouples build ↔ status-sync) |
-| `src/lib/store.ts` | AES-GCM encrypted JSON DB with async write queue |
-| `src/lib/config.ts` | All env var config |
-| `src/types.ts` | Shared TypeScript types |
-| `web/src/App.tsx` | Full React dashboard (single-file SPA) |
-| `web/src/styles/index.css` | Terminal-dark design system |
-| `web/vite.config.ts` | Vite config with /api proxy for dev mode |
+| `src/app.ts` | Express app factory built from injected dependencies (`AppDeps`) |
+| `src/index.ts` | Production entrypoint wiring real dependencies and starting the server |
+| `src/lib/wiring.ts` | Wires Nexus-Auth, sandbox Docker ops, and Cloud route publisher |
+| `src/lib/build.ts` | Clone/build or pull → release → rollback pipeline |
+| `src/lib/build-steps.ts` | Git askpass clone, Dockerfile / Railpack image build, OCI image pull |
+| `src/lib/release.ts` | Blue/green and stop-then-start container release state machine |
+| `src/lib/run-args.ts` | Hardened `docker run` argument builder (`--cap-drop ALL`, caps, log limits) |
+| `src/lib/docker.ts` | Sandbox-enforced Docker/Railpack CLI wrapper (`SANDBOX_DOCKER_HOST` required) |
+| `src/lib/cloud.ts` | Nexus Cloud `user-apps` route publisher + heartbeat |
+| `src/lib/edge.ts` | Combines Cloud publisher with Hosting + Cloud slug availability checks |
+| `src/lib/members.ts` | Invite-only member list, first-founder seeding, per-project ownership |
+| `src/lib/safeguards.ts` | Node-wide per-member quotas, rate limits, timeouts, and disk guard |
+| `src/lib/store.ts` | AES-256-GCM encrypted JSON DB with serialized async `writeDb` queue |
+| `src/doctor/` | `npm run doctor` static preflight (13 checks across sandbox, builder, DNS, Cloud, UI) |
+| `src/verify/` | `npm run verify` live end-to-end conformance suite using bundled `fixtures/` |
+| `sandbox/setup.sh` | Operator `sudo` script provisioning the rootless sandbox user, loop disk, and nftables egress filter |
+| `sandbox/install-builder.sh` | User-scoped Railpack `v0.43.0` installer (`~/.local/bin/railpack`) |
+| `web/src/` | React + Vite dashboard using the shared Void theme (`nexus-tokens.css`) |
 
 ## API surface
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | /api/auth/login | — | Returns JWT |
-| POST | /api/auth/register | — | Only if ALLOW_REGISTRATION=true |
-| GET | /api/me | Bearer | Current user |
-| GET | /api/events?token= | query | SSE status stream |
-| GET | /api/projects | Bearer | All projects + latestDeployment |
-| POST | /api/projects | Bearer | Create project |
-| GET | /api/projects/:id | Bearer | Project + deployments |
-| PUT | /api/projects/:id | Bearer | Update settings |
-| DELETE | /api/projects/:id | Bearer | Delete + remove container |
-| PUT | /api/projects/:id/env | Bearer | Set env vars |
-| POST | /api/projects/:id/deploy | Bearer | Trigger build |
-| POST | /api/projects/:id/stop | Bearer | Stop container |
-| POST | /api/projects/:id/start | Bearer | Start container |
-| POST | /api/projects/:id/restart | Bearer | Restart container |
-| GET | /api/projects/:id/stats | Bearer | Live CPU/mem/net stats |
-| GET | /api/projects/:id/health | Bearer | Docker status check |
-| POST | /api/projects/:id/regen-webhook-secret | Bearer | New webhook secret |
-| POST | /api/deployments/:id/rollback | Bearer | Re-run existing image |
-| GET | /api/deployments/:id/logs | Bearer | Deployment log array |
-| GET | /api/activity | Bearer | Last 25 deploys across projects |
-| POST | /api/webhooks/github/:projectId | HMAC | GitHub push webhook |
-| WS | /api/log-stream?deploymentId=&token= | query | Build log stream |
-| WS | /api/container-stream?projectId=&token= | query | Runtime log stream |
-| POST | /api/deployments/:id/cancel | Bearer | Cancel in-progress build |
+| GET | `/api/health` | Public | Liveness check |
+| GET | `/api/auth/login` | Public | Redirects browser to `NEXUS_AUTH_PUBLIC_URL/login` |
+| GET | `/api/auth/logout` | Public | Redirects browser to `NEXUS_AUTH_PUBLIC_URL/logout` |
+| GET | `/api/me` | Auth | Current identity, member/operator access, node info, and `wsToken` |
+| GET | `/api/limits` | Member | Node safeguards, domain patterns, and `best-effort` availability |
+| GET | `/api/events` | Member | SSE status stream for projects visible to the caller |
+| GET | `/api/activity` | Member | Last 25 deployments across projects visible to the caller |
+| GET | `/api/projects` | Member | Caller's projects (or all for operators) + `latestDeployment` |
+| POST | `/api/projects` | Member | Create Git or OCI image project (checks slug in Cloud + Hosting) |
+| GET | `/api/projects/:id` | Owner/Op | Project details + deployments |
+| PUT | `/api/projects/:id` | Owner/Op | Update project settings / source / private token |
+| DELETE | `/api/projects/:id` | Owner/Op | Remove containers, route, volume, images, logs, and project |
+| GET | `/api/projects/:id/export` | Owner/Op | Export portable project JSON (omits credentials) |
+| PUT | `/api/projects/:id/env` | Owner/Op | Validate and save encrypted environment variables |
+| POST | `/api/projects/:id/deploy` | Owner/Op | Trigger deployment |
+| POST | `/api/projects/:id/stop` | Owner/Op | Stop running container |
+| POST | `/api/projects/:id/start` | Owner/Op | Start stopped container |
+| POST | `/api/projects/:id/restart` | Owner/Op | Restart container |
+| GET | `/api/projects/:id/stats` | Owner/Op | Live CPU/memory/network container stats |
+| GET | `/api/projects/:id/health` | Owner/Op | Container status check |
+| POST | `/api/projects/:id/regen-webhook-secret` | Owner/Op | Rotate GitHub webhook HMAC secret |
+| POST | `/api/deployments/:id/rollback` | Owner/Op | Roll back to a deployment's recorded image or `@sha256` digest |
+| POST | `/api/deployments/:id/cancel` | Owner/Op | Cancel an in-progress build |
+| GET | `/api/deployments/:id/logs` | Owner/Op | Build log lines and deployment status |
+| DELETE | `/api/deployments/:id/logs` | Owner/Op | Erase a finished deployment's build log |
+| GET | `/api/admin/members` | Operator | List invited members |
+| POST | `/api/admin/members` | Operator | Grant member access (`authUserId`, optional `label`) |
+| PATCH | `/api/admin/members/:authUserId` | Operator | Suspend or reactivate a member |
+| GET | `/api/admin/audit` | Operator | 30-day zero-IP audit trail |
+| POST | `/api/webhooks/github/:projectId` | HMAC | GitHub push webhook (`X-Hub-Signature-256`) |
+| WS | `/api/log-stream?deploymentId=&token=` | Ticket/Token/Cookie | Real-time build log stream |
+| WS | `/api/container-stream?projectId=&token=` | Ticket/Token/Cookie | Real-time container stdout/stderr stream |
 
 ## Auth
-Token accepted as:
-- `Authorization: Bearer <token>` — for all API calls
-- `?token=<token>` — for SSE (EventSource) and WebSocket (browser limitation)
-
-## How it fits together (v0.6)
-- `src/app.ts` builds the HTTP app from injected dependencies (`AppDeps`); `src/index.ts` only wires the real ones and listens. Tests inject fakes, so nothing needs Nexus-Auth, Docker or Git.
-- **Members and ownership** (`lib/members.ts`): Nexus-Auth proves identity; an operator (Auth founder/admin) lets accounts in. Every project has an `ownerId`; another member's project answers 404, exactly like a missing one. Operators see all.
-- **Sources** (`lib/source.ts`): a project has one source, Git or image. A private-repo token is handed to git by an askpass helper, never put in a URL, argument, log or API response.
-- **Pipeline** (`lib/build.ts`): clone/build or pull, then `lib/release.ts` starts the new container on its own loopback port, proves it healthy, tells the ingress through a `RoutePublisher`, then stops the old one (blue/green). A project with a data volume releases stop-then-start instead.
-- **Sandbox**: every `docker`/`nixpacks` call is forced to `SANDBOX_DOCKER_HOST` and refuses to run without it. Never fall back to the host daemon. App containers are started only through `lib/run-args.ts`, which drops all capabilities and caps CPU, memory, processes and logs.
-- **Privacy**: no visitor address is read or stored anywhere (scripts/check-privacy.sh in the monorepo enforces it). The audit log records account, action and time only, for thirty days.
-- Node-specific values (`BASE_DOMAIN`, `APP_HOST_PATTERN`, `CONTROL_HOST`, `SANDBOX_*`, `APP_PORT_RANGE`, `CAP_*`) are configuration; no source file may name a domain (a test enforces it).
-
-## Testing
-- `node --import tsx --test tests/*.test.ts` runs everything; `npm run typecheck` and `npm run typecheck:tests` must be clean. New code must also pass `biome check` (the older files still have a lint backlog, which is not part of any slice).
-- On a filesystem that cannot execute binaries, point `ESBUILD_BINARY_PATH` at an executable copy of esbuild.
+Identity is delegated to **Nexus-Auth** (`GET /api/v1/auth/check`):
+- `Authorization: Bearer <token>` — for API clients
+- `Cookie: nexus_session=<token>` — shared `HttpOnly` ecosystem session cookie for browsers
+- `?token=<wsToken|sessionToken>` — for WebSocket upgrades through the edge proxy (`GET /api/me` issues a short-lived HMAC `wsToken` so `nexus_session` stays `HttpOnly`)
 
 ## Conventions
 - Keep it lean. No ORM, no message queue, no microservices.
 - All DB writes go through `writeDb(mutate)` — never call `saveDb` during builds.
-- `saveDb` is only for boot-time seeding where no concurrent writes exist.
-- Per-project build lock via `buildingProjects Set<string>` in build.ts.
-- `emitStatusChange` in events.ts is the single bus for project status changes.
-- Image naming: `nexus/{project-name}:{8-char-deployment-id}`
-- Container naming: `nexus-app-{project-name}`
-- Volume naming: `nexus-vol-{project-name}` (mounted at project.volumePath)
-- Never add billing, plans or paywalls. Free forever. Safeguards that protect a shared node (container caps, build limits, the disk guard) are allowed and apply equally to everyone; an operator tunes them for the whole node with CAP_* variables.
+- `saveDb` is only for boot-time seeding or test resets where no concurrent writes exist.
+- Image naming for Git builds: `nexus/{project-name}:{8-char-deployment-id}`
+- Container naming: `nexus-app-{project-name}-{8-char-deployment-id}` (`src/lib/containers.ts`) so blue/green releases can run old and new containers side by side during cutover.
+- Volume naming: `nexus-vol-{project-name}` (mounted at `project.volumePath`).
+- **Sandbox enforcement**: every `docker` and `railpack` call requires `SANDBOX_DOCKER_HOST` and never falls back to the host daemon.
+- **Privacy**: never read or store visitor IP addresses or user agents (`scripts/check-privacy.sh` enforces this across the monorepo). The audit log records only account ID, action, subject, and timestamp, retained for 30 days.
+- **Portability**: node-specific values (`BASE_DOMAIN`, `APP_HOST_PATTERN`, `CONTROL_HOST`, `SANDBOX_*`, `APP_PORT_RANGE`, `CAP_*`) live in `src/lib/config.ts`. No `src/` or `web/src/` file may hardcode `tnhc.dev` (`tests/no-hardcoded-domain.test.ts`).
+- **No billing**: Never add billing, plans or paywalls; safeguards protect the node and apply equally.
 
-## Standards Enforcement
-- Follow ../docs/ENGINEERING_STANDARDS.md as the baseline for TypeScript quality, API behavior, observability, and security.
-- Preserve event-driven deployment flow. GitHub webhooks, WS streams, SSE updates, and status propagation are the preferred coordination model; do not regress to polling-heavy orchestration.
-- Treat Nexus-Cloud as the upstream ecosystem nerve system for registration, topology, and routing coordination.
-- Keep degraded-mode behavior explicit: if Docker, GitHub, or a downstream dependency fails, surface that through state changes, logs, and retry/circuit logic rather than silent failure.
-
-## Dev
+## Dev & Quality Gate
 ```bash
 npm install && npm --prefix web install
-npm run dev          # tsx watch + vite (with /api proxy)
-npm run build        # prod build
-npm run typecheck    # tsc --noEmit
+./check.sh           # typecheck (server, tests, web) + full unit test suite
+npm run doctor       # static 13-check node & sandbox readiness report
+npm run verify       # live 8-step end-to-end conformance suite against the sandbox daemon
 ```
-
-## Validation Target
-- `npm run check`
-- `npm test` when behavior changes touch runtime code
