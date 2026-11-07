@@ -34,7 +34,7 @@ export function buildDeployRegistrationPayload() {
     health: "healthy",
     upstreamUrl: `http://127.0.0.1:${config.port}`,
     publicUrl: config.baseUrl,
-    delivery: "framed",
+    delivery: "external",
     capabilities: ["deployment", "ci-cd"],
     metadata: {
       version: "0.6.0",
