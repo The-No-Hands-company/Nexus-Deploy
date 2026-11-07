@@ -37,6 +37,18 @@ export type Ctx = {
   probeImage: string;
   /** Run the docker CLI against the sandbox daemon, and nothing else. */
   docker(args: string[], timeoutMs?: number): Promise<DockerResult>;
+  /** Run the builder CLI (Railpack) to check its presence and version. */
+  builder(args: string[], timeoutMs?: number): Promise<DockerResult>;
+  /** CLOUD_URL. Empty on a standalone node that does not announce routes to Cloud. */
+  cloudUrl: string;
+  /** NEXUS_CLOUD_USER_APPS_KEY. Empty when unset. */
+  cloudUserAppsKey: string;
+  /** Read-only probe against Cloud's user-apps endpoint using NEXUS_CLOUD_USER_APPS_KEY. */
+  probeCloud(): Promise<{ ok: boolean; detail: string }>;
+  /** BASE_DOMAIN, e.g. example.test or localhost. */
+  baseDomain: string;
+  /** Resolve an IPv4 hostname via the system resolver; returns [] when it does not resolve. */
+  resolveHost(host: string): Promise<string[]>;
   fileExists(path: string): boolean;
   /** The device number of the filesystem holding `path`, or null if it does not exist. */
   device(path: string): number | null;

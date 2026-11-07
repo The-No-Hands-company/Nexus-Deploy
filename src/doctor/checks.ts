@@ -255,4 +255,63 @@ export const CHECKS: Check[] = [
           );
     },
   },
+  {
+    id: "builder-installed",
+    title: "The builder (Railpack) is installed",
+    async run(ctx) {
+      const res = await ctx.builder(["--version"], 10_000);
+      const version = res.stdout.trim().split("\n")[0] ?? "";
+      return res.code === 0 && /railpack/i.test(version)
+        ? pass(version)
+        : fail(
+            `Railpack is missing or could not run (${(res.stderr || res.stdout).trim().split("\n")[0] || `exit ${res.code}`}).`,
+            "Run bash sandbox/install-builder.sh to install Railpack into ~/.local/bin.",
+          );
+    },
+  },
+  {
+    id: "cloud-registration",
+    title: "Cloud route registration is ready",
+    async run(ctx) {
+      if (!ctx.cloudUrl) {
+        return warn(
+          "CLOUD_URL is empty; live routes will not be announced to Nexus Cloud (standalone mode).",
+          "Set CLOUD_URL and NEXUS_CLOUD_USER_APPS_KEY to publish routes through Nexus Cloud.",
+        );
+      }
+      if (!ctx.cloudUserAppsKey) {
+        return fail(
+          "NEXUS_CLOUD_USER_APPS_KEY is empty while CLOUD_URL is set, so route publishing will fail.",
+          "Set NEXUS_CLOUD_USER_APPS_KEY in both Cloud's and Deploy's .env files.",
+        );
+      }
+      const res = await ctx.probeCloud();
+      return res.ok
+        ? pass(res.detail)
+        : fail(
+            `Cloud rejected or did not answer the route-registration probe: ${res.detail}`,
+            "Check that Nexus Cloud is running at CLOUD_URL and has the same NEXUS_CLOUD_USER_APPS_KEY.",
+          );
+    },
+  },
+  {
+    id: "wildcard-domain",
+    title: "The wildcard domain resolves",
+    async run(ctx) {
+      if (!ctx.baseDomain) {
+        return fail("BASE_DOMAIN is empty.", "Set BASE_DOMAIN in .env (for example example.test).");
+      }
+      if (ctx.baseDomain === "localhost" || ctx.baseDomain.endsWith(".localhost")) {
+        return pass(`${ctx.baseDomain} (loopback domain)`);
+      }
+      const probeHost = `doctor-probe.${ctx.baseDomain}`;
+      const addrs = await ctx.resolveHost(probeHost);
+      return addrs.length > 0
+        ? pass(`*.${ctx.baseDomain} → ${addrs.join(", ")}`)
+        : fail(
+            `${probeHost} did not resolve to an IPv4 address.`,
+            `Point a wildcard DNS record (*.${ctx.baseDomain}) and deploy.${ctx.baseDomain} at this node's ingress.`,
+          );
+    },
+  },
 ];

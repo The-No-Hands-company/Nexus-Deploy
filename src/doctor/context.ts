@@ -1,17 +1,24 @@
 import { spawn } from "node:child_process";
+import dns from "node:dns/promises";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
+import { resolveRailpackBin } from "../lib/build-steps.js";
+import { cloudNameTaken } from "../lib/cloud.js";
 import { config } from "../lib/config.js";
 import { childEnv } from "../lib/docker.js";
 import type { Ctx, DockerResult, Listener } from "./types.js";
 
-function run(cmd: string, args: string[], timeoutMs: number): Promise<DockerResult> {
+function run(
+  cmd: string,
+  args: string[],
+  timeoutMs: number,
+  env: NodeJS.ProcessEnv = childEnv(cmd, config.sandboxDockerHost),
+): Promise<DockerResult> {
   return new Promise((resolve) => {
     const proc = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      // The same forced environment real builds get: the sandbox daemon, nothing else.
-      env: childEnv(cmd, config.sandboxDockerHost),
+      env,
     });
     let stdout = "";
     let stderr = "";
@@ -59,6 +66,29 @@ export function realContext(limits: Ctx["limits"]): Ctx {
     limits,
     probeImage: process.env["DOCTOR_PROBE_IMAGE"] ?? "busybox:1.36",
     docker: (args, timeoutMs = 30_000) => run("docker", args, timeoutMs),
+    builder: (args, timeoutMs = 10_000) => run(resolveRailpackBin(), args, timeoutMs, process.env),
+    cloudUrl: config.cloudUrl,
+    cloudUserAppsKey: config.cloudUserAppsKey,
+    async probeCloud() {
+      const base = config.cloudUrl.replace(/\/+$/, "");
+      try {
+        await cloudNameTaken(
+          { url: base, key: config.cloudUserAppsKey, timeoutMs: 5_000 },
+          "doctor-probe",
+        );
+        return { ok: true, detail: `${base} (user-apps key accepted)` };
+      } catch (error) {
+        return { ok: false, detail: (error as Error).message };
+      }
+    },
+    baseDomain: config.baseDomain,
+    async resolveHost(host) {
+      try {
+        return await dns.resolve4(host);
+      } catch {
+        return [];
+      }
+    },
     fileExists: (p) => fs.existsSync(p),
     device: (p) => {
       try {

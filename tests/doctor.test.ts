@@ -50,6 +50,15 @@ function fakeCtx(over: Partial<Ctx> = {}, reach: string[] = []): Ctx & { calls: 
       }
       return ok();
     },
+    builder: async () => ok("railpack version 0.43.0\n"),
+    cloudUrl: "http://127.0.0.1:8787",
+    cloudUserAppsKey: "uakey-test",
+    probeCloud: async () => ({
+      ok: true,
+      detail: "http://127.0.0.1:8787 (user-apps key accepted)",
+    }),
+    baseDomain: "example.test",
+    resolveHost: async () => ["203.0.113.10"],
     fileExists: () => true,
     device: (p) => (p.endsWith("/..") ? 1 : 2),
     fsUsage: () => ({ totalBytes: 12 * 1024 ** 3, freeBytes: 11 * 1024 ** 3 }),
@@ -241,12 +250,56 @@ test("a check that throws is a failure of that check, not of the run", async () 
   assert.equal(byId(results, "sandbox-dns").status, "pass");
 });
 
+test("a missing builder binary is reported with the install command", async () => {
+  const results = await runChecks(
+    fakeCtx({
+      builder: async () => ({ code: 127, stdout: "", stderr: "spawn railpack ENOENT" }),
+    }),
+  );
+  const r = byId(results, "builder-installed");
+  assert.equal(r.status, "fail");
+  assert.match(r.detail, /ENOENT/);
+  assert.match(r.fix ?? "", /sandbox\/install-builder\.sh/);
+});
+
+test("Cloud registration warns in standalone mode and fails when misconfigured or rejected", async () => {
+  const standalone = await runChecks(fakeCtx({ cloudUrl: "", cloudUserAppsKey: "" }));
+  assert.equal(byId(standalone, "cloud-registration").status, "warn");
+  assert.equal(exitCode(standalone), 0);
+
+  const missingKey = await runChecks(fakeCtx({ cloudUserAppsKey: "" }));
+  assert.equal(byId(missingKey, "cloud-registration").status, "fail");
+  assert.match(byId(missingKey, "cloud-registration").detail, /NEXUS_CLOUD_USER_APPS_KEY/);
+
+  const rejected = await runChecks(
+    fakeCtx({ probeCloud: async () => ({ ok: false, detail: "HTTP 403" }) }),
+  );
+  assert.equal(byId(rejected, "cloud-registration").status, "fail");
+  assert.match(byId(rejected, "cloud-registration").detail, /HTTP 403/);
+});
+
+test("the wildcard domain check accepts loopback domains and fails when DNS does not resolve", async () => {
+  const loopback = await runChecks(
+    fakeCtx({ baseDomain: "localhost", resolveHost: async () => [] }),
+  );
+  assert.equal(byId(loopback, "wildcard-domain").status, "pass");
+
+  const empty = await runChecks(fakeCtx({ baseDomain: "" }));
+  assert.equal(byId(empty, "wildcard-domain").status, "fail");
+
+  const unresolvable = await runChecks(fakeCtx({ resolveHost: async () => [] }));
+  const r = byId(unresolvable, "wildcard-domain");
+  assert.equal(r.status, "fail");
+  assert.match(r.detail, /doctor-probe\.example\.test/);
+  assert.match(r.fix ?? "", /\*\.example\.test/);
+});
+
 test("the report names each result and ends with a tally; fixes are shown for failures only", async () => {
   const results = await runChecks(fakeCtx({ device: () => 7 }));
   const text = formatReport(results);
   assert.match(text, /FAIL {2}The sandbox has its own size-capped filesystem/);
   assert.match(text, /fix: Run sandbox\/setup\.sh again/);
-  assert.match(text, /9 passed, 1 failed, 0 warnings, 0 skipped/);
-  assert.deepEqual(summarize(results), { passed: 9, warnings: 0, failed: 1, skipped: 0 });
+  assert.match(text, /12 passed, 1 failed, 0 warnings, 0 skipped/);
+  assert.deepEqual(summarize(results), { passed: 12, warnings: 0, failed: 1, skipped: 0 });
   assert.ok(!formatReport(await runChecks(fakeCtx())).includes("fix:"));
 });
