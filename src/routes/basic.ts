@@ -1,7 +1,12 @@
 import type { Request, Response, Router } from "express";
 import { grantMember, resolveAccess, setMemberStatus } from "../lib/members.js";
 import { loadDb, writeDb } from "../lib/store.js";
-import type { AuthedRequest } from "../middleware/auth.js";
+import {
+  type AuthedRequest,
+  issueStreamTicket,
+  loginUrlFor,
+  logoutUrlFor,
+} from "../middleware/auth.js";
 import type { MemberStatus } from "../types.js";
 import { audit, paramOf } from "./context.js";
 import type { RouteContext } from "./types.js";
@@ -20,6 +25,17 @@ export function basicRoutes(router: Router, ctx: RouteContext): void {
     });
   });
 
+  // Browser sign-in and sign-out redirects use the node's configured Auth URL
+  // so the frontend bundle never hardcodes a deployment domain.
+  router.get("/api/auth/login", (req: Request, res: Response) => {
+    const redirect = typeof req.query["redirect"] === "string" ? req.query["redirect"] : "/";
+    res.redirect(302, loginUrlFor(req, redirect));
+  });
+
+  router.get("/api/auth/logout", (_req: Request, res: Response) => {
+    res.redirect(302, logoutUrlFor());
+  });
+
   // Who am I, and am I let in? Answered even for an account that is not a member,
   // so the dashboard can show "ask an operator" instead of a bare error.
   router.get("/api/me", ctx.auth, (req: Request, res: Response) => {
@@ -31,6 +47,8 @@ export function basicRoutes(router: Router, ctx: RouteContext): void {
       access: access.ok
         ? { member: true, operator: access.operator }
         : { member: false, reason: access.reason },
+      node: deps.node,
+      ...(access.ok ? { wsToken: issueStreamTicket(identity, deps.now()) } : {}),
     });
   });
 

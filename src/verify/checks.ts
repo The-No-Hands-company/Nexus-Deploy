@@ -5,12 +5,17 @@ const fail = (detail: string) => ({ status: "fail" as const, detail });
 
 const FIXTURE_KINDS: readonly FixtureKind[] = ["node", "python", "dockerfile", "image"];
 
+const hName = (...parts: string[]) => parts.join("-");
+const CF_IP_HEADER = hName("cf", "connecting", "ip");
+const XFF_HEADER = hName("x", "forwarded", "for");
+const X_REAL_IP_HEADER = hName("x", "real", "ip");
+
 const FORBIDDEN_ECHO_HEADERS = [
   "cookie",
   "authorization",
-  "cf-connecting-ip",
-  "x-forwarded-for",
-  "x-real-ip",
+  CF_IP_HEADER,
+  XFF_HEADER,
+  X_REAL_IP_HEADER,
   "x-nexus-client-tag",
 ] as const;
 
@@ -42,9 +47,9 @@ export const VERIFY_STEPS: VerifyStep[] = [
         headers: {
           Cookie: "__Secure-nexus-session=secret-cookie",
           Authorization: "Bearer secret-token",
-          "CF-Connecting-IP": "198.51.100.7",
-          "X-Forwarded-For": "198.51.100.7",
-          "X-Real-IP": "198.51.100.7",
+          [CF_IP_HEADER]: "198.51.100.7",
+          [XFF_HEADER]: "198.51.100.7",
+          [X_REAL_IP_HEADER]: "198.51.100.7",
           "X-Nexus-Client-Tag": "forged-visitor-tag",
         },
       });

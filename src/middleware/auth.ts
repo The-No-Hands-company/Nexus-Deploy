@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { config } from "../lib/config.js";
 import type { GrantedAccess } from "../lib/members.js";
@@ -34,7 +35,7 @@ const SESSION_COOKIE = "nexus_session";
  * the credential that actually arrives when a user clicks through from another
  * app in the ecosystem.
  */
-function readSessionCookie(req: Request): string | undefined {
+export function readSessionCookie(req: { headers: { cookie?: string } }): string | undefined {
   const header = req.headers.cookie;
   if (!header) return undefined;
   for (const part of header.split(";")) {
@@ -45,6 +46,68 @@ function readSessionCookie(req: Request): string | undefined {
     }
   }
   return undefined;
+}
+
+const STREAM_TICKET_PREFIX = "wst1.";
+const STREAM_TICKET_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Short-lived HMAC ticket for WebSocket log streams.
+ *
+ * The ecosystem session cookie is HttpOnly (so browser JS cannot read it) and
+ * the edge proxy strips Cookie headers on WebSocket upgrades to non-terminal
+ * hosts. Issuing a Deploy-scoped ticket from GET /api/me lets the browser open
+ * /api/log-stream and /api/container-stream without ever exposing the session
+ * cookie to JavaScript.
+ */
+export function issueStreamTicket(identity: NexusIdentity, nowMs = Date.now()): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      id: identity.id,
+      ...(typeof identity.username === "string" ? { username: identity.username } : {}),
+      ...(typeof identity.email === "string" ? { email: identity.email } : {}),
+      ...(typeof identity.role === "string" ? { role: identity.role } : {}),
+      exp: nowMs + STREAM_TICKET_TTL_MS,
+    }),
+    "utf8",
+  ).toString("base64url");
+  const sig = crypto.createHmac("sha256", config.appSecret).update(payload).digest("base64url");
+  return `${STREAM_TICKET_PREFIX}${payload}.${sig}`;
+}
+
+export function verifyStreamTicket(ticket: string, nowMs = Date.now()): NexusIdentity | null {
+  if (!ticket.startsWith(STREAM_TICKET_PREFIX)) return null;
+  const rest = ticket.slice(STREAM_TICKET_PREFIX.length);
+  const dot = rest.indexOf(".");
+  if (dot <= 0) return null;
+  const payload = rest.slice(0, dot);
+  const sig = rest.slice(dot + 1);
+  const expected = crypto
+    .createHmac("sha256", config.appSecret)
+    .update(payload)
+    .digest("base64url");
+  const sigBuf = Buffer.from(sig, "utf8");
+  const expBuf = Buffer.from(expected, "utf8");
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      id?: unknown;
+      username?: unknown;
+      email?: unknown;
+      role?: unknown;
+      exp?: unknown;
+    };
+    if (typeof parsed.id !== "string" || !parsed.id) return null;
+    if (typeof parsed.exp !== "number" || parsed.exp <= nowMs) return null;
+    return {
+      id: parsed.id,
+      ...(typeof parsed.username === "string" ? { username: parsed.username } : {}),
+      ...(typeof parsed.email === "string" ? { email: parsed.email } : {}),
+      ...(typeof parsed.role === "string" ? { role: parsed.role } : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -99,12 +162,23 @@ function wantsHtml(req: Request): boolean {
   return req.method === "GET" && (req.headers.accept ?? "").includes("text/html");
 }
 
-function loginUrlFor(req: Request): string {
+export function loginUrlFor(req: Request, pathOverride?: string): string {
   const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;
   const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.get("host") ?? "";
-  const here = `${proto}://${host}${req.originalUrl}`;
+  const safePath =
+    pathOverride === undefined
+      ? req.originalUrl
+      : pathOverride.startsWith("/") && !pathOverride.startsWith("//")
+        ? pathOverride
+        : "/";
+  const here = `${proto}://${host}${safePath}`;
   const base = config.nexusAuthPublicUrl.replace(/\/+$/, "");
   return `${base}/login?redirect=${encodeURIComponent(here)}`;
+}
+
+export function logoutUrlFor(): string {
+  const base = config.nexusAuthPublicUrl.replace(/\/+$/, "");
+  return `${base}/logout`;
 }
 
 function denyUnauthenticated(req: Request, res: Response): void {

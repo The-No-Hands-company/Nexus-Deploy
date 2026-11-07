@@ -8,7 +8,7 @@
  */
 import type { Server } from "node:http";
 import { type WebSocket, WebSocketServer } from "ws";
-import { verifyWithNexusAuth } from "../middleware/auth.js";
+import { readSessionCookie, verifyStreamTicket, verifyWithNexusAuth } from "../middleware/auth.js";
 import type { AppDeps } from "../routes/types.js";
 import { subscribeToDeployment } from "./build.js";
 import { containerNameOf } from "./containers.js";
@@ -17,9 +17,10 @@ import { loadDb } from "./store.js";
 
 const HEARTBEAT_MS = 15_000;
 
-async function accessFor(token: string | null, deps: AppDeps) {
-  if (!token) return null;
-  const identity = await verifyWithNexusAuth(token, deps.authenticate);
+async function accessFor(token: string | null, cookieToken: string | undefined, deps: AppDeps) {
+  const fromTicket = token?.startsWith("wst1.") ? verifyStreamTicket(token, deps.now()) : null;
+  const raw = fromTicket ? null : token || cookieToken || null;
+  const identity = fromTicket ?? (raw ? await verifyWithNexusAuth(raw, deps.authenticate) : null);
   if (!identity) return null;
   const access = resolveAccess(loadDb().members, identity);
   return access.ok ? access : null;
@@ -58,7 +59,7 @@ export function attachSockets(server: Server, deps: AppDeps): void {
   // ── A build's log ────────────────────────────────────────────────────────
   buildLogs.on("connection", async (socket, req) => {
     const url = new URL(req.url ?? "", "http://localhost");
-    const access = await accessFor(url.searchParams.get("token"), deps);
+    const access = await accessFor(url.searchParams.get("token"), readSessionCookie(req), deps);
     if (!access) return void socket.close(1008, "Unauthorized");
 
     const deploymentId = url.searchParams.get("deploymentId");
@@ -97,7 +98,7 @@ export function attachSockets(server: Server, deps: AppDeps): void {
   // ── A running container's output ─────────────────────────────────────────
   containerLogs.on("connection", async (socket, req) => {
     const url = new URL(req.url ?? "", "http://localhost");
-    const access = await accessFor(url.searchParams.get("token"), deps);
+    const access = await accessFor(url.searchParams.get("token"), readSessionCookie(req), deps);
     if (!access) return void socket.close(1008, "Unauthorized");
 
     const projectId = url.searchParams.get("projectId");

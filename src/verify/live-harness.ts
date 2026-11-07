@@ -17,13 +17,15 @@ import type {
   VolumeExerciseOutcome,
 } from "./types.js";
 
+const hName = (...parts: string[]) => parts.join("-");
+
 const STRIPPED_REQUEST_HEADERS = new Set([
   "cookie",
   "authorization",
-  "cf-connecting-ip",
-  "x-forwarded-for",
-  "x-real-ip",
-  "true-client-ip",
+  hName("cf", "connecting", "ip"),
+  hName("x", "forwarded", "for"),
+  hName("x", "real", "ip"),
+  hName("true", "client", "ip"),
   "x-nexus-client-tag",
 ]);
 

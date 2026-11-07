@@ -19,9 +19,12 @@ beforeEach(async () => {
 
 type Outcome = { messages: Array<{ type: string; line?: string; status?: string }>; code: number };
 
-function open(pathAndQuery: string): Promise<Outcome> {
+function open(pathAndQuery: string, headers?: Record<string, string>): Promise<Outcome> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(`${h.url.replace("http", "ws")}${pathAndQuery}`);
+    const socket = new WebSocket(
+      `${h.url.replace("http", "ws")}${pathAndQuery}`,
+      headers ? { headers } : undefined,
+    );
     const messages: Outcome["messages"] = [];
     socket.on("message", (data) => messages.push(JSON.parse(data.toString())));
     socket.on("close", (code) => resolve({ messages, code }));
@@ -78,4 +81,56 @@ test("a container's output streams to its owner and to nobody else", async () =>
   const theirs = await open(`/api/container-stream?projectId=${p.id}&token=t-bob`);
   assert.equal(theirs.code, 1008);
   assert.deepEqual(h.ops.calls, [], "no log process was started for the wrong member");
+});
+
+test("browser WebSocket streams authenticate with the /api/me stream ticket or session cookie", async () => {
+  const p = addProject({ ownerId: "ada" });
+  const dep = addDeployment({ projectId: p.id, logs: ["via-ticket"], status: "live" });
+
+  const me = await h.call("GET", "/api/me", { token: "t-ada" });
+  assert.equal(me.status, 200);
+  assert.equal(typeof me.body.wsToken, "string");
+  assert.ok((me.body.wsToken as string).startsWith("wst1."));
+
+  const byTicket = await open(
+    `/api/log-stream?deploymentId=${dep.id}&token=${encodeURIComponent(me.body.wsToken as string)}`,
+  );
+  assert.deepEqual(byTicket.messages, [
+    { type: "log", line: "via-ticket" },
+    { type: "done", status: "live" },
+  ]);
+
+  const forgedTicket = await open(`/api/log-stream?deploymentId=${dep.id}&token=wst1.bad.sig`);
+  assert.equal(forgedTicket.code, 1008);
+
+  const byCookie = await open(`/api/log-stream?deploymentId=${dep.id}`, {
+    Cookie: "nexus_session=t-ada",
+  });
+  assert.deepEqual(byCookie.messages, [
+    { type: "log", line: "via-ticket" },
+    { type: "done", status: "live" },
+  ]);
+});
+
+test("/api/auth/login and /api/auth/logout redirect using the node's Auth URL and reject external redirects", async () => {
+  const loginSafe = await fetch(`${h.url}/api/auth/login?redirect=%2Fprojects%2Fprj_1`, {
+    redirect: "manual",
+    headers: { "x-forwarded-proto": "https", "x-forwarded-host": "deploy.example.test" },
+  });
+  assert.equal(loginSafe.status, 302);
+  assert.match(
+    loginSafe.headers.get("location") ?? "",
+    /\/login\?redirect=https%3A%2F%2Fdeploy\.example\.test%2Fprojects%2Fprj_1$/,
+  );
+
+  const loginExternal = await fetch(`${h.url}/api/auth/login?redirect=//evil.example/phish`, {
+    redirect: "manual",
+    headers: { "x-forwarded-proto": "https", "x-forwarded-host": "deploy.example.test" },
+  });
+  assert.equal(loginExternal.status, 302);
+  assert.doesNotMatch(loginExternal.headers.get("location") ?? "", /evil\.example/);
+
+  const logout = await fetch(`${h.url}/api/auth/logout`, { redirect: "manual" });
+  assert.equal(logout.status, 302);
+  assert.match(logout.headers.get("location") ?? "", /\/logout$/);
 });
