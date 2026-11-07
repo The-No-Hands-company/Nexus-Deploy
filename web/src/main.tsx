@@ -4,8 +4,11 @@ import App from "./App";
 import "./styles/index.css";
 
 // BrowserRouter is managed inside App.tsx — do not add another here
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+const root = document.getElementById("root");
+if (root) {
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}

@@ -9,13 +9,14 @@ function sourceFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) return sourceFiles(full);
-    return entry.name.endsWith(".ts") ? [full] : [];
+    return entry.name.endsWith(".ts") || entry.name.endsWith(".tsx") ? [full] : [];
   });
 }
 
-test("no source file hardcodes a deployment domain", () => {
-  const offenders = sourceFiles(path.resolve("src")).filter((file) =>
-    /tnhc\.dev/i.test(fs.readFileSync(file, "utf8")),
-  );
+test("no backend or frontend source file hardcodes a deployment domain", () => {
+  const dirs = [path.resolve("src"), path.resolve("web/src")];
+  const offenders = dirs
+    .flatMap((d) => sourceFiles(d))
+    .filter((file) => /tnhc\.dev/i.test(fs.readFileSync(file, "utf8")));
   assert.deepEqual(offenders, []);
 });

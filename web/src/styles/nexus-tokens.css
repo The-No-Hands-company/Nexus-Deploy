@@ -1,0 +1,153 @@
+/* Generated from tokens/nexus.tokens.json — do not edit.
+   Change the JSON and run: bun run build */
+
+:root {
+  --nexus-typography-fontFamily-base: Figtree, -apple-system, BlinkMacSystemFont, Segoe UI,
+    sans-serif;
+  --nexus-typography-fontFamily-mono: JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
+  --nexus-typography-weight-regular: 400;
+  --nexus-typography-weight-medium: 500;
+  --nexus-typography-weight-semibold: 600;
+  --nexus-typography-weight-bold: 700;
+  --nexus-typography-lineHeight-tight: 1.2;
+  --nexus-typography-lineHeight-normal: 1.45;
+  --nexus-typography-lineHeight-relaxed: 1.7;
+  --nexus-radius-sm: 6px;
+  --nexus-radius-md: 10px;
+  --nexus-radius-lg: 14px;
+  --nexus-radius-pill: 999px;
+  --nexus-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.18);
+  --nexus-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.24);
+  --nexus-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.32);
+  --nexus-motion-duration-fast: 120ms;
+  --nexus-motion-duration-normal: 180ms;
+  --nexus-motion-duration-slow: 280ms;
+  --nexus-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --nexus-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 0.8);
+  --nexus-zIndex-base: 1;
+  --nexus-zIndex-header: 50;
+  --nexus-zIndex-overlay: 100;
+  --nexus-zIndex-modal: 200;
+  --nexus-zIndex-toast: 300;
+}
+
+:root,
+[data-nexus-theme="void"] {
+  --nexus-color-bg-canvas: #030303;
+  --nexus-color-bg-surface: #0a0a0a;
+  --nexus-color-bg-elevated: #111111;
+  --nexus-color-bg-raised: #171717;
+  --nexus-color-text-primary: #ffffff;
+  --nexus-color-text-secondary: #a0a0a0;
+  --nexus-color-text-muted: #6e6e6e;
+  --nexus-color-text-inverse: #030303;
+  --nexus-color-accent-primary: #ccff00;
+  --nexus-color-accent-hover: #b8e600;
+  --nexus-color-accent-active: #a3cc00;
+  --nexus-color-state-success: #2ac57d;
+  --nexus-color-state-warning: #e8b24a;
+  --nexus-color-state-danger: #e15d5d;
+  --nexus-color-state-info: #5ca8ff;
+  --nexus-color-border-subtle: rgba(255, 255, 255, 0.36);
+  --nexus-color-border-strong: rgba(255, 255, 255, 0.44);
+}
+
+[data-nexus-theme="abyss"] {
+  --nexus-color-bg-canvas: #04100e;
+  --nexus-color-bg-surface: #08201c;
+  --nexus-color-bg-elevated: #0c2b26;
+  --nexus-color-bg-raised: #113630;
+  --nexus-color-text-primary: #f0fbf8;
+  --nexus-color-text-secondary: #9db8b1;
+  --nexus-color-text-muted: #6e8a83;
+  --nexus-color-text-inverse: #04100e;
+  --nexus-color-accent-primary: #d4ff3d;
+  --nexus-color-accent-hover: #c2f520;
+  --nexus-color-accent-active: #aee000;
+  --nexus-color-state-success: #4ade80;
+  --nexus-color-state-warning: #f0be5a;
+  --nexus-color-state-danger: #f07171;
+  --nexus-color-state-info: #7dd3fc;
+  --nexus-color-border-subtle: rgba(140, 255, 225, 0.4);
+  --nexus-color-border-strong: rgba(140, 255, 225, 0.52);
+}
+
+[data-nexus-theme="petrol"] {
+  --nexus-color-bg-canvas: #07131a;
+  --nexus-color-bg-surface: #0c1f28;
+  --nexus-color-bg-elevated: #112b36;
+  --nexus-color-bg-raised: #163643;
+  --nexus-color-text-primary: #f2f8fa;
+  --nexus-color-text-secondary: #a0b4bd;
+  --nexus-color-text-muted: #71858f;
+  --nexus-color-text-inverse: #07131a;
+  --nexus-color-accent-primary: #ccff00;
+  --nexus-color-accent-hover: #b8e600;
+  --nexus-color-accent-active: #a3cc00;
+  --nexus-color-state-success: #34d399;
+  --nexus-color-state-warning: #ebb454;
+  --nexus-color-state-danger: #ef6e6e;
+  --nexus-color-state-info: #60a5fa;
+  --nexus-color-border-subtle: rgba(150, 220, 255, 0.46);
+  --nexus-color-border-strong: rgba(150, 220, 255, 0.6);
+}
+
+[data-nexus-theme="slate"] {
+  --nexus-color-bg-canvas: #080d16;
+  --nexus-color-bg-surface: #0d1421;
+  --nexus-color-bg-elevated: #141d2e;
+  --nexus-color-bg-raised: #1a2539;
+  --nexus-color-text-primary: #f1f4fa;
+  --nexus-color-text-secondary: #a3afc4;
+  --nexus-color-text-muted: #74809a;
+  --nexus-color-text-inverse: #080d16;
+  --nexus-color-accent-primary: #c2f000;
+  --nexus-color-accent-hover: #afda00;
+  --nexus-color-accent-active: #9bc300;
+  --nexus-color-state-success: #34d399;
+  --nexus-color-state-warning: #ebb454;
+  --nexus-color-state-danger: #ef6e6e;
+  --nexus-color-state-info: #60a5fa;
+  --nexus-color-border-subtle: rgba(160, 190, 255, 0.49);
+  --nexus-color-border-strong: rgba(160, 190, 255, 0.62);
+}
+
+:root,
+[data-nexus-density="balanced"] {
+  --nexus-space-1: 4px;
+  --nexus-space-2: 8px;
+  --nexus-space-3: 12px;
+  --nexus-space-4: 16px;
+  --nexus-space-5: 20px;
+  --nexus-space-6: 24px;
+  --nexus-space-7: 32px;
+  --nexus-space-8: 48px;
+  --nexus-typography-size-xs: 11px;
+  --nexus-typography-size-sm: 13px;
+  --nexus-typography-size-base: 14px;
+  --nexus-typography-size-lg: 16px;
+  --nexus-typography-size-xl: 20px;
+  --nexus-typography-size-2xl: 28px;
+  --nexus-control-height: 32px;
+  --nexus-widget-padding: 16px;
+}
+
+[data-nexus-density="compact"] {
+  --nexus-space-1: 2px;
+  --nexus-space-2: 4px;
+  --nexus-space-3: 8px;
+  --nexus-space-4: 12px;
+  --nexus-space-5: 16px;
+  --nexus-space-6: 20px;
+  --nexus-space-7: 24px;
+  --nexus-space-8: 32px;
+  --nexus-typography-size-xs: 10px;
+  --nexus-typography-size-sm: 12px;
+  --nexus-typography-size-base: 13px;
+  --nexus-typography-size-lg: 15px;
+  --nexus-typography-size-xl: 18px;
+  --nexus-typography-size-2xl: 24px;
+  --nexus-control-height: 26px;
+  --nexus-widget-padding: 12px;
+}
