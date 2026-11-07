@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createApp } from "./app.js";
 import { setRoutePublisher } from "./lib/build.js";
+import { startDeployCloudRegistration } from "./lib/cloud-registration.js";
 import { config, ensureDataDir } from "./lib/config.js";
 import { startStatusSync } from "./lib/status-sync.js";
 import { realDeps, realEdge } from "./lib/wiring.js";
@@ -15,6 +16,7 @@ const server = createServer(createApp(deps));
 attachSockets(server, deps);
 
 startStatusSync(30_000);
+startDeployCloudRegistration();
 
 server.listen(config.port, () => {
   void edge.start();
