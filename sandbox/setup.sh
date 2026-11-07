@@ -134,6 +134,7 @@ render_nft() {
 table inet nexus_deploy_sandbox {
   chain output {
     type filter hook output priority 0; policy accept;
+    meta skuid $uid ct state established,related accept
 EOF
   while IFS= read -r r; do
     [ -n "$r" ] || continue
