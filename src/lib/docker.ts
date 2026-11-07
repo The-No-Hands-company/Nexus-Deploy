@@ -20,7 +20,7 @@ export class SandboxNotConfigured extends Error {
   }
 }
 
-const SANDBOXED_COMMANDS = new Set(["docker", "nixpacks"]);
+const SANDBOXED_COMMANDS = new Set(["docker", "railpack", "nixpacks"]);
 
 /**
  * Environment for a child process. Docker and the builder are pointed at the
@@ -33,7 +33,7 @@ export function childEnv(
   sandboxHost: string,
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  if (!SANDBOXED_COMMANDS.has(cmd)) return base;
+  if (!SANDBOXED_COMMANDS.has(path.basename(cmd))) return base;
   if (!sandboxHost) throw new SandboxNotConfigured();
   const env: NodeJS.ProcessEnv = { ...base, DOCKER_HOST: sandboxHost };
   delete env["DOCKER_CONTEXT"];

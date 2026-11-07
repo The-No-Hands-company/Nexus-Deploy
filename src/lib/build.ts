@@ -379,7 +379,7 @@ export async function runDeploy(
         buildDir,
         validateDockerfile(project.dockerfile, project.buildContext ?? "."),
       );
-      log(`[nexus] Building with ${dockerfile ? "Docker" : "Nixpacks"} → ${tag}`);
+      log(`[nexus] Building with ${dockerfile ? "Docker" : "Railpack"} → ${tag}`);
       await deps.steps.buildImage({ contextDir, dockerfile, tag }, log, track);
       assertActive();
       log("[nexus] ✓ Image built");

@@ -9,6 +9,7 @@ refuses to build or run anything rather than fall back to the host's Docker.
 
 ```bash
 cd apps/Nexus-Deploy
+bash sandbox/install-builder.sh                          # installs Railpack v0.43.0 into ~/.local/bin (no root)
 bash sandbox/setup.sh --print --deploy-user "$USER"      # read what it will do; changes nothing
 sudo bash sandbox/setup.sh --deploy-user "$USER" --size-gb 12
 ```

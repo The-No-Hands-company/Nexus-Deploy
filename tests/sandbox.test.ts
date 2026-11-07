@@ -25,6 +25,8 @@ test("docker and the builder are pointed at the sandbox, overriding anything amb
   assert.equal("DOCKER_CONTEXT" in env, false);
   assert.equal("DOCKER_TLS_VERIFY" in env, false);
   assert.equal("DOCKER_CERT_PATH" in env, false);
+  assert.equal(childEnv("railpack", SANDBOX, {})["DOCKER_HOST"], SANDBOX);
+  assert.equal(childEnv("/home/ops/.local/bin/railpack", SANDBOX, {})["DOCKER_HOST"], SANDBOX);
   assert.equal(childEnv("nixpacks", SANDBOX, {})["DOCKER_HOST"], SANDBOX);
 });
 
@@ -32,6 +34,11 @@ test("with no sandbox configured, docker and the builder refuse to run at all", 
   assert.throws(
     () => childEnv("docker", "", { DOCKER_HOST: "unix:///var/run/docker.sock" }),
     SandboxNotConfigured,
+  );
+  assert.throws(() => childEnv("railpack", ""), /Refusing to use the host's Docker daemon/);
+  assert.throws(
+    () => childEnv("/home/ops/.local/bin/railpack", ""),
+    /Refusing to use the host's Docker daemon/,
   );
   assert.throws(() => childEnv("nixpacks", ""), /Refusing to use the host's Docker daemon/);
 });
