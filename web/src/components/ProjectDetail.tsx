@@ -23,6 +23,9 @@ export function ProjectDetail({ wsToken, node }: { wsToken: string; node: NodeIn
   const [nextEnvId, setNextEnvId] = useState(1);
   const [envSaved, setEnvSaved] = useState(false);
   const [webhookCopied, setWebhookCopied] = useState<"url" | "secret" | null>(null);
+  const [webhookRevealed, setWebhookRevealed] = useState(false);
+  const [rollbackConfirmId, setRollbackConfirmId] = useState<string | null>(null);
+  const [regenConfirm, setRegenConfirm] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -82,7 +85,6 @@ export function ProjectDetail({ wsToken, node }: { wsToken: string; node: NodeIn
   }
 
   async function triggerRollback(depId: string) {
-    if (!confirm("Roll back to this deployment image?")) return;
     setDeploying(true);
     try {
       const { deployment } = await api.post(`/api/deployments/${depId}/rollback`, {});
@@ -335,15 +337,36 @@ export function ProjectDetail({ wsToken, node }: { wsToken: string; node: NodeIn
                     <div className="deploy-row-actions">
                       <span className="muted">{new Date(d.createdAt).toLocaleString()}</span>
                       {d.imageTag && (
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          title="Roll back to this image"
-                          onClick={() => triggerRollback(d.id)}
-                          disabled={isBuilding}
-                        >
-                          ↩
-                        </button>
+                        rollbackConfirmId === d.id ? (
+                          <>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              style={{ fontSize: 12, padding: "2px 8px", color: "var(--danger)" }}
+                              onClick={() => { setRollbackConfirmId(null); void triggerRollback(d.id); }}
+                              disabled={isBuilding}
+                            >
+                              Confirm ↩
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              onClick={() => setRollbackConfirmId(null)}
+                            >
+                              ✕
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title="Roll back to this image"
+                            onClick={() => setRollbackConfirmId(d.id)}
+                            disabled={isBuilding}
+                          >
+                            ↩
+                          </button>
+                        )
                       )}
                       {d.status !== "building" && d.status !== "queued" && (
                         <button
@@ -455,7 +478,14 @@ export function ProjectDetail({ wsToken, node }: { wsToken: string; node: NodeIn
               <button type="button" className="btn-primary" onClick={saveEnv}>
                 Save Variables
               </button>
-              {envSaved && <span style={{ color: "var(--success)", fontSize: 13 }}>✓ Saved</span>}
+              {envSaved && (
+                <>
+                  <span style={{ color: "var(--success)", fontSize: 13 }}>✓ Saved</span>
+                  <button type="button" className="btn-ghost" onClick={() => void triggerDeploy()}>
+                    ⚡ Deploy to Apply →
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -498,7 +528,16 @@ export function ProjectDetail({ wsToken, node }: { wsToken: string; node: NodeIn
             <div style={{ marginTop: 14 }}>
               <div className="field-hint">Webhook Secret (HMAC-SHA256)</div>
               <div className="copy-row">
-                <code className="code-block">{project.webhookSecret}</code>
+                <code className="code-block">
+                  {webhookRevealed ? project.webhookSecret : "•".repeat(32)}
+                </code>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setWebhookRevealed((r) => !r)}
+                >
+                  {webhookRevealed ? "Hide" : "Reveal"}
+                </button>
                 <button
                   type="button"
                   className="btn-ghost"
@@ -506,19 +545,40 @@ export function ProjectDetail({ wsToken, node }: { wsToken: string; node: NodeIn
                 >
                   {webhookCopied === "secret" ? "✓ Copied" : "Copy"}
                 </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={async () => {
-                    if (!confirm("Regenerate webhook secret?")) return;
-                    const { webhookSecret } = await api.post(
-                      `/api/projects/${id}/regen-webhook-secret`,
-                    );
-                    setProject((p) => (p ? { ...p, webhookSecret } : p));
-                  }}
-                >
-                  ↺ Regenerate
-                </button>
+                {regenConfirm ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ color: "var(--danger)" }}
+                      onClick={async () => {
+                        setRegenConfirm(false);
+                        const { webhookSecret } = await api.post(
+                          `/api/projects/${id}/regen-webhook-secret`,
+                        );
+                        setProject((p) => (p ? { ...p, webhookSecret } : p));
+                        setWebhookRevealed(true);
+                      }}
+                    >
+                      Confirm Regen
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => setRegenConfirm(false)}
+                    >
+                      ✕
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setRegenConfirm(true)}
+                  >
+                    ↺ Regenerate
+                  </button>
+                )}
               </div>
             </div>
           </div>

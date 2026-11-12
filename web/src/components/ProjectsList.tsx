@@ -167,7 +167,7 @@ export function ProjectsList({
               onChange={(e) => setSearch(e.target.value)}
             />
             <div className="filter-pills">
-              {(["all", "live", "building", "failed", "stopped", "idle"] as const).map((s) => (
+              {(["all", "live", "queued", "building", "failed", "stopped", "idle"] as const).map((s) => (
                 <button
                   type="button"
                   key={s}
