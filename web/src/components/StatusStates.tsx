@@ -137,6 +137,21 @@ export function NotAMemberState({
   );
 }
 
+const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
+
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, "").replace(/\r/g, "");
+}
+
+function classifyLine(line: string): string {
+  if (line.startsWith("[nexus]")) return "nexus";
+  const lo = line.toLowerCase();
+  if (lo.includes("error") || lo.includes("failed") || lo.includes("fatal")) return "err";
+  if (lo.includes("warning") || /\bwarn\b/.test(lo)) return "warn";
+  if (/^(step \d+\/\d+|---> |#\d+ )/.test(line)) return "step";
+  return "";
+}
+
 export function LogTerminal({
   deploymentId,
   projectId,
@@ -151,12 +166,16 @@ export function LogTerminal({
   const [lines, setLines] = useState<string[]>([]);
   const [done, setDone] = useState(false);
   const [status, setStatus] = useState<string>("");
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLines([]);
     setDone(false);
     setStatus("");
+    setAutoScroll(true);
 
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const tokenParam = wsToken ? `&token=${encodeURIComponent(wsToken)}` : "";
@@ -170,7 +189,7 @@ export function LogTerminal({
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === "log" || msg.type === "info" || msg.type === "error") {
-          setLines((prev) => [...prev, msg.line]);
+          setLines((prev) => [...prev, stripAnsi(msg.line)]);
         } else if (msg.type === "done") {
           setDone(true);
           setStatus(msg.status);
@@ -184,34 +203,59 @@ export function LogTerminal({
   }, [deploymentId, projectId, wsToken, mode]);
 
   useEffect(() => {
-    if (lines.length === 0) return;
+    if (!autoScroll) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lines.length]);
+  }, [lines.length, autoScroll]);
+
+  function onScroll() {
+    const el = bodyRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    setAutoScroll(atBottom);
+  }
+
+  function copyAll() {
+    navigator.clipboard.writeText(lines.join("\n")).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  const doneLabel =
+    mode === "container"
+      ? "[connection closed]"
+      : status === "live"
+        ? "✓ succeeded"
+        : `✗ ${status}`;
 
   return (
     <div className="log-terminal">
       <div className="log-header">
-        <span className={`log-dot ${done ? "done" : "pulsing"}`} />
-        <span>{mode === "build" ? "Build Output" : "Live Container Logs"}</span>
-        {done && (
-          <span className={`log-done ${status}`}>
-            {status === "live" ? "✓ Build succeeded" : `✗ Build ${status}`}
-          </span>
-        )}
+        <span className={`log-dot ${done ? "" : "pulsing"}`} />
+        <span>{mode === "build" ? "Build Output" : "Live Logs"}</span>
+        {lines.length > 0 && <span className="log-count">{lines.length} lines</span>}
+        {done && <span className={`log-done ${status}`}>{doneLabel}</span>}
+        <div className="log-controls">
+          <button
+            type="button"
+            className={`log-btn ${autoScroll ? "active" : ""}`}
+            onClick={() => {
+              setAutoScroll(true);
+              bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+            }}
+            title="Follow new output"
+          >
+            ↓ follow
+          </button>
+          <button type="button" className="log-btn" onClick={copyAll}>
+            {copied ? "✓ copied" : "copy"}
+          </button>
+        </div>
       </div>
-      <div className="log-body">
+      <div className="log-body" ref={bodyRef} onScroll={onScroll}>
         {lines.length === 0 && <div className="log-empty">Waiting for output…</div>}
         {lines.map((line, i) => (
-          <div
-            key={`${i}-${line.slice(0, 24)}`}
-            className={`log-line ${
-              line.includes("ERROR") || line.includes("failed")
-                ? "err"
-                : line.startsWith("[nexus]")
-                  ? "nexus"
-                  : ""
-            }`}
-          >
+          // biome-ignore lint/suspicious/noArrayIndexKey: append-only list
+          <div key={i} className={`log-line ${classifyLine(line)}`}>
             {line}
           </div>
         ))}

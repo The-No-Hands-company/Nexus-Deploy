@@ -1064,9 +1064,57 @@ input::placeholder {
 .log-line.err {
   color: var(--danger);
 }
+.log-line.warn {
+  color: var(--warn);
+}
 .log-line.nexus {
   color: var(--accent);
 }
+.log-line.step {
+  color: var(--text);
+  font-weight: var(--nexus-typography-weight-semibold);
+}
+
+.log-count {
+  font-family: var(--mono);
+  font-size: var(--nexus-typography-size-xs);
+  color: var(--text3);
+  background: var(--surface2);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.log-controls {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.log-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text3);
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  min-height: 22px;
+  cursor: pointer;
+  transition: color var(--nexus-motion-duration-fast), border-color var(--nexus-motion-duration-fast);
+}
+
+.log-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.log-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(204, 255, 0, 0.06);
+}
+
 .log-empty {
   color: var(--text3);
   font-size: var(--nexus-typography-size-xs);

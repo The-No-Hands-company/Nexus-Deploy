@@ -31,7 +31,7 @@ function Sidebar({
       {!embedded && (
         <div className="sidebar-brand">
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span className="brand-mark">⬡</span>
+            <span className="brand-mark">D</span>
             <div>
               <div className="brand-name">Nexus Deploy</div>
               <div className="brand-sub">{node.controlHost}</div>
